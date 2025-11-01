@@ -84,17 +84,17 @@ def run_translation(pdf_path: str, target_lang: str) -> Tuple[str, Optional[str]
         json_output = output_dir / "extracted_pdf.json"
         converter = translate.PDFToJSONConverter()
         
-        progress_msg = f"📄 Extracting PDF to JSON...\n"
+        progress_msg = f"Extracting PDF to JSON...\n"
         data = converter.convert_pdf_to_json_enhanced(
             pdf_path, 
             output_path=str(json_output),
             include_images=True,
             image_handling="metadata"
         )
-        progress_msg += f"✅ PDF extraction completed.\n"
+        progress_msg += f"PDF extraction completed.\n"
         
         # Step 2: Translate
-        progress_msg += f"🌐 Translating to {target_lang}... This may take a few minutes.\n"
+        progress_msg += f"Translating to {target_lang}... This may take a few minutes.\n"
         translator = translate.JSONTranslator()
         translated_json_path = translator.translate_json_file(
             str(json_output), 
@@ -103,25 +103,25 @@ def run_translation(pdf_path: str, target_lang: str) -> Tuple[str, Optional[str]
         )
         
         if not translated_json_path:
-            return f"❌ Translation failed. Please check console output.", None
+            return f"Translation failed. Please check console output.", None
         
-        progress_msg += f"✅ Translation completed.\n"
+        progress_msg += f"Translation completed.\n"
         
         # Step 3: Generate PDF
-        progress_msg += f"📄 Rendering translated PDF...\n"
+        progress_msg += f"Rendering translated PDF...\n"
         output_pdf = output_dir / f"translated_{target_lang.lower()}.pdf"
         pdf_gen = translate.PDFGenerator(str(translated_json_path), str(output_pdf))
         pdf_gen.generate_pdf()
         
         if output_pdf.exists():
-            progress_msg += f"✅ Translation complete! File saved to: {output_pdf}\n"
+            progress_msg += f"Translation complete! File saved to: {output_pdf}\n"
             return progress_msg, str(output_pdf)
         else:
-            return f"❌ PDF generation failed.", None
+            return f"PDF generation failed.", None
             
     except Exception as e:
         import traceback
-        error_msg = f"❌ Translation Error:\n{str(e)}\n\n{traceback.format_exc()}"
+        error_msg = f"Translation Error:\n{str(e)}\n\n{traceback.format_exc()}"
         return error_msg, None
 
 
@@ -136,23 +136,23 @@ def run_solution(pdf_path: str, target_lang: str) -> Tuple[str, Optional[str]]:
         output_dir = PROJECT_ROOT / "outputs"
         output_dir.mkdir(exist_ok=True)
         
-        progress_msg = "📄 Extracting PDF (text + images)...\n"
+        progress_msg = "Extracting PDF (text + images)...\n"
         pages = solution.extract_pdf(
             pdf_path,
             output_json=str(output_dir / "extracted_data.json"),
             output_image_folder=str(output_dir / "extracted_images")
         )
-        progress_msg += "✅ Extraction completed.\n"
+        progress_msg += "Extraction completed.\n"
         
-        progress_msg += "🧠 Solving extracted content...\n"
+        progress_msg += "Solving extracted content...\n"
         solved = solution.solve_pages(pages)
-        progress_msg += "✅ Solving completed.\n"
+        progress_msg += "Solving completed.\n"
         
-        progress_msg += f"🌐 Translating solutions to {target_lang}...\n"
+        progress_msg += f"Translating solutions to {target_lang}...\n"
         translated = solution.translate_items(solved, target_lang)
-        progress_msg += "✅ Translation completed.\n"
+        progress_msg += "Translation completed.\n"
         
-        progress_msg += "📄 Rendering solved PDF...\n"
+        progress_msg += "Rendering solved PDF...\n"
         output_pdf = output_dir / f"final_solved_{target_lang.lower()}.pdf"
         
         # Run async function with asyncio
@@ -160,14 +160,14 @@ def run_solution(pdf_path: str, target_lang: str) -> Tuple[str, Optional[str]]:
         asyncio.run(solution.render_pdf_from_data(translated, target_lang.lower(), str(output_pdf)))
         
         if output_pdf.exists():
-            progress_msg += f"✅ Solution complete! File saved to: {output_pdf}\n"
+            progress_msg += f"Solution complete! File saved to: {output_pdf}\n"
             return progress_msg, str(output_pdf)
         else:
-            return "❌ PDF generation failed.", None
+            return "PDF generation failed.", None
             
     except Exception as e:
         import traceback
-        error_msg = f"❌ Solution Error:\n{str(e)}\n\n{traceback.format_exc()}"
+        error_msg = f"Solution Error:\n{str(e)}\n\n{traceback.format_exc()}"
         return error_msg, None
 
 
@@ -182,26 +182,26 @@ def run_mcq_generation(pdf_path: str, num_mcqs: int, target_lang: str) -> Tuple[
         output_dir = PROJECT_ROOT / "outputs"
         output_dir.mkdir(exist_ok=True)
         
-        progress_msg = f"🧠 Generating {num_mcqs} MCQs using Gemini...\n"
+        progress_msg = f"Generating {num_mcqs} MCQs using Gemini...\n"
         mcqs = generate.generate_mcqs(pdf_path, num_mcqs, target_lang)
         
         if not mcqs:
-            return "❌ No MCQs were generated.", None
+            return "No MCQs were generated.", None
         
-        progress_msg += "✅ MCQs generated.\n📄 Saving to PDF...\n"
+        progress_msg += "MCQs generated. Saving to PDF...\n"
         
         output_pdf = output_dir / f"Generated_MCQs_{target_lang}.pdf"
         ok = generate.save_pdf(mcqs, str(output_pdf), target_lang)
         
         if ok and output_pdf.exists():
-            progress_msg += f"✅ MCQ generation complete! File saved to: {output_pdf}\n"
+            progress_msg += f"MCQ generation complete! File saved to: {output_pdf}\n"
             return progress_msg, str(output_pdf)
         else:
-            return "❌ Failed to create PDF.", None
+            return "Failed to create PDF.", None
             
     except Exception as e:
         import traceback
-        error_msg = f"❌ MCQ Generation Error:\n{str(e)}\n\n{traceback.format_exc()}"
+        error_msg = f"MCQ Generation Error:\n{str(e)}\n\n{traceback.format_exc()}"
         return error_msg, None
 
 
@@ -212,7 +212,7 @@ def run_mcq_generation(pdf_path: str, num_mcqs: int, target_lang: str) -> Tuple[
 def process_translation(pdf_file, target_lang):
     """Process translation request"""
     if pdf_file is None:
-        return "❌ Please upload a PDF file first.", None
+        return "Please upload a PDF file first.", None
     
     # Save uploaded file
     work_dir = PROJECT_ROOT / "temp"
@@ -226,7 +226,7 @@ def process_translation(pdf_file, target_lang):
 def process_solution(pdf_file, target_lang):
     """Process solution request"""
     if pdf_file is None:
-        return "❌ Please upload a PDF file first.", None
+        return "Please upload a PDF file first.", None
     
     # Save uploaded file
     work_dir = PROJECT_ROOT / "temp"
@@ -240,7 +240,7 @@ def process_solution(pdf_file, target_lang):
 def process_mcq_generation(pdf_file, num_mcqs, target_lang):
     """Process MCQ generation request"""
     if pdf_file is None:
-        return "❌ Please upload a PDF file first.", None
+        return "Please upload a PDF file first.", None
     
     # Save uploaded file
     work_dir = PROJECT_ROOT / "temp"
@@ -281,7 +281,7 @@ def create_interface():
             with gr.Column(scale=2):
                 with gr.Tabs():
                     # ========== TRANSLATION TAB ==========
-                    with gr.Tab("🌐 Translation"):
+                    with gr.Tab("Translation"):
                         gr.Markdown(
                             """
                             ### Translate PDF Content
