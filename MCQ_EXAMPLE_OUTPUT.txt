@@ -1,0 +1,78 @@
+Example MCQ Output Format
+================================
+
+This is what the MCQ PDF will look like based on the current prompt:
+
+═══════════════════════════════════════════════════════════════
+For English Language:
+═══════════════════════════════════════════════════════════════
+
+1. What is the capital of France?
+A) London
+B) Berlin
+C) Paris
+D) Madrid
+Answer: C
+
+2. Which programming language is used for web development?
+A) COBOL
+B) Fortran
+C) JavaScript
+D) Assembly
+Answer: C
+
+3. What is 2 + 2?
+A) 3
+B) 4
+C) 5
+D) 6
+Answer: B
+
+═══════════════════════════════════════════════════════════════
+For Telugu Language (తెలుగు):
+═══════════════════════════════════════════════════════════════
+
+1. భారతదేశ రాజధాని ఏమిటి?
+A) ముంబై
+B) కోల్కతా
+C) న్యూఢిల్లీ
+D) చెన్నై
+Answer: C
+
+2. 2 + 2 ఎంత?
+A) 3
+B) 4
+C) 5
+D) 6
+Answer: B
+
+═══════════════════════════════════════════════════════════════
+For Hindi Language (हिन्दी):
+═══════════════════════════════════════════════════════════════
+
+1. भारत की राजधानी क्या है?
+A) मुंबई
+B) कोलकाता
+C) नई दिल्ली
+D) चेन्नई
+Answer: C
+
+2. 3 × 3 कितना होता है?
+A) 6
+B) 7
+C) 8
+D) 9
+Answer: D
+
+═══════════════════════════════════════════════════════════════
+
+KEY FEATURES:
+- Each question numbered (1., 2., 3., etc.)
+- 4 options always (A, B, C, D)
+- Answer clearly shown after each question
+- Proper line spacing
+- Format works for all languages
+- Playwright renders with Indic fonts
+
+═══════════════════════════════════════════════════════════════
+

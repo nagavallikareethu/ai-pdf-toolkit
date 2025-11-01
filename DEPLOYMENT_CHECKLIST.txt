@@ -1,0 +1,98 @@
+═══════════════════════════════════════════════════════════════
+  HUGGING FACE DEPLOYMENT - ESSENTIAL FILES CHECKLIST
+═══════════════════════════════════════════════════════════════
+
+✅ UPLOAD THESE FILES TO HUGGING FACE:
+═══════════════════════════════════════════════════════════════
+
+1. ✅ app_gradio.py               (Main application)
+2. ✅ generate.py                 (MCQ generation)
+3. ✅ solution.py                 (Question solving)
+4. ✅ translate.py                (PDF translation)
+5. ✅ download_fonts.py           (Font utility)
+6. ✅ requirements.txt            (Dependencies)
+7. ✅ README.md                   (Documentation)
+8. ✅ .gitignore                  (Exclude unwanted files)
+
+9. ✅ fonts/                      (ENTIRE FOLDER - CRITICAL!)
+   ├── NotoSansTelugu-Regular.ttf
+   ├── NotoSansDevanagari-Regular.ttf
+   ├── NotoSansOriya-Regular.ttf
+   ├── NotoSansTamil-Regular.ttf
+   ├── NotoSansKannada-Regular.ttf
+   ├── TiroDevanagariHindi-Regular.ttf
+   └── AnekOdia-Regular.ttf
+
+═══════════════════════════════════════════════════════════════
+❌ DO NOT UPLOAD:
+═══════════════════════════════════════════════════════════════
+
+❌ __pycache__/
+❌ venv/
+❌ outputs/
+❌ temp/
+❌ .env (your actual API keys!)
+❌ *.pyc files
+❌ *.log files
+❌ All other *.md files (except README.md)
+
+═══════════════════════════════════════════════════════════════
+🔑 SET THESE SECRETS IN HUGGING FACE SPACES:
+═══════════════════════════════════════════════════════════════
+
+Settings → Secrets → Add these:
+
+1. GEMINI_API_KEY: your_actual_api_key_here
+2. GENAI_API_KEY: your_actual_api_key_here (same as above)
+3. GENAI_MODEL: models/gemini-2.5-flash
+
+═══════════════════════════════════════════════════════════════
+📋 DEPLOYMENT STEPS:
+═══════════════════════════════════════════════════════════════
+
+1. Go to https://huggingface.co/spaces
+2. Click "Create new Space"
+3. Settings:
+   - Name: your-app-name
+   - SDK: Gradio
+   - Hardware: CPU Basic (or higher)
+   - Visibility: Public/Private
+4. Upload all essential files listed above
+5. Add secrets in Settings → Secrets
+6. Wait for build (will install dependencies & Playwright)
+7. Test your deployed app!
+
+═══════════════════════════════════════════════════════════════
+⚠️  CRITICAL REMINDERS:
+═══════════════════════════════════════════════════════════════
+
+⚠️  fonts/ folder is ABSOLUTELY ESSENTIAL!
+    Without it, Indic language rendering will fail!
+
+⚠️  NEVER upload .env file with your API keys!
+    Use Secrets instead
+
+⚠️  Make sure requirements.txt has all dependencies
+
+⚠️  Playwright installation happens automatically during build
+
+═══════════════════════════════════════════════════════════════
+✅ TESTING CHECKLIST:
+═══════════════════════════════════════════════════════════════
+
+After deployment, test:
+
+□ Translation module works
+□ Solution module works  
+□ MCQ generation works
+□ Indic fonts render correctly (Telugu, Hindi, Odia, etc.)
+□ PDF downloads work
+□ No errors in logs
+□ All languages supported
+
+═══════════════════════════════════════════════════════════════
+
+Ready to deploy! Good luck! 🚀
+
+═══════════════════════════════════════════════════════════════
+
