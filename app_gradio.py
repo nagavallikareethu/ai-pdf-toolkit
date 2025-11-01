@@ -397,5 +397,5 @@ if __name__ == "__main__":
     
     # Create and launch the interface
     demo = create_interface()
-    demo.launch()
+    demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))
 
