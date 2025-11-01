@@ -283,7 +283,6 @@ SCRIPT_DIR = pathlib.Path(__file__).parent.resolve()
 FONTS_DIR = SCRIPT_DIR / "fonts"
 
 FONTS = {
-    "english": str(FONTS_DIR / "NotoSans-Regular.ttf"),  # ADDED ENGLISH FONT
     "telugu": str(FONTS_DIR / "NotoSansTelugu-Regular.ttf"),
     "hindi":  str(FONTS_DIR / "TiroDevanagariHindi-Regular.ttf"),
     "odia":   str(FONTS_DIR / "AnekOdia-Regular.ttf"),
@@ -299,9 +298,9 @@ def register_reportlab_fonts():
             try:
                 font_name = lang.capitalize()
                 pdfmetrics.registerFont(TTFont(font_name, font_path))
-                print(f"✅ Registered font: {font_name}")
+                print(f"Registered font: {font_name}")
             except Exception as e:
-                print(f"❌ Failed to register {lang}: {e}")
+                print(f"Failed to register {lang}: {e}")
 
 def detect_language_sample(data):
     if not data:
@@ -463,25 +462,20 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
         c.drawString(50, y, f"Q{q_no}.")
         y -= 20
         
-        # Question text (Try Telugu font, fallback to English) - FIXED
+        # Question text (Use Telugu font for Indic languages)
         if q_text:
             try:
                 if font_name:
-                    # Test if font can render the text
                     c.setFont(font_name, 12)
-                    # Draw a small test first
-                    test_text = q_text[:10] if len(q_text) > 10 else q_text
-                    c.drawString(70, y, test_text)
-                    # If successful, draw the full text
                     c.drawString(70, y, q_text)
                 else:
                     c.setFont("Helvetica", 12)
                     c.drawString(70, y, q_text)
             except Exception as font_error:
-                # Fallback to English font if Telugu fails
-                print(f"Font error, using fallback: {font_error}")
+                print(f"Font error for question: {font_error}")
+                # For Indic languages, try Helvetica with visible characters
                 c.setFont("Helvetica", 12)
-                c.drawString(70, y, q_text)
+                c.drawString(70, y, q_text if lang == "english" else "[Font error]")
             y -= 15
         
         # Answer
