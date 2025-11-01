@@ -406,6 +406,40 @@ async def render_pdf_from_data_playwright(data, lang, output_pdf):
 
     return True
 
+def draw_wrapped_text(c, text, x, y, width, font_name, font_size):
+    """Draw text with automatic wrapping"""
+    words = text.split()
+    lines = []
+    current_line = []
+    current_width = 0
+    
+    # Use regular font for width calculation
+    width_font = font_name if font_name else "Helvetica"
+    c.setFont(width_font, font_size)
+    
+    for word in words:
+        # Calculate width of word with space
+        word_width = c.stringWidth(word + " ", width_font, font_size)
+        if current_width + word_width <= width:
+            current_line.append(word)
+            current_width += word_width
+        else:
+            if current_line:
+                lines.append(" ".join(current_line))
+            current_line = [word]
+            current_width = word_width
+    
+    if current_line:
+        lines.append(" ".join(current_line))
+    
+    # Draw each line
+    current_y = y
+    for line in lines:
+        c.drawString(x, current_y, line)
+        current_y -= font_size + 5
+    
+    return current_y
+
 def render_pdf_from_data_reportlab(data, lang, output_pdf):
     """Fallback to ReportLab for PDF generation"""
     output_path = pathlib.Path(output_pdf)
@@ -434,6 +468,7 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
     # Create PDF
     c = canvas.Canvas(str(output_pdf), pagesize=A4)
     width, height = A4
+    available_width = width - 140  # Left margin + right margin
     
     # Title with Telugu font for Indic languages
     y = height - 50
@@ -468,45 +503,47 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
         c.drawString(50, y, f"Q{q_no}.")
         y -= 20
         
-        # Question text (Use Telugu font for Indic languages)
+        # Question text (Use Telugu font with wrapping)
         if q_text:
             try:
-                if font_name:
-                    c.setFont(font_name, 12)
-                    c.drawString(70, y, q_text)
-                else:
-                    c.setFont("Helvetica", 12)
-                    c.drawString(70, y, q_text)
+                y = draw_wrapped_text(c, q_text, 70, y, available_width, font_name, 12)
             except Exception as font_error:
                 print(f"Font error for question: {font_error}")
-                # For Indic languages, try Helvetica with visible characters
-                c.setFont("Helvetica", 12)
-                c.drawString(70, y, q_text if lang == "english" else "[Font error]")
-            y -= 15
+                # Fallback to simple rendering
+                try:
+                    c.setFont("Helvetica", 12)
+                    c.drawString(70, y, q_text if lang == "english" else "[Font error]")
+                    y -= 15
+                except:
+                    y -= 15
         
-        # Answer (use Telugu font)
+        # Answer (use Telugu font with wrapping)
         if ans:
-            if font_name:
+            try:
+                answer_text = f"{ans_label}: {ans}"
+                y = draw_wrapped_text(c, answer_text, 70, y - 10, available_width, font_name, 11)
+            except Exception as font_error:
+                print(f"Font error for answer: {font_error}")
                 try:
-                    c.setFont(font_name, 11)
-                except:
                     c.setFont("Helvetica-Bold", 11)
-            else:
-                c.setFont("Helvetica-Bold", 11)
-            c.drawString(70, y, f"{ans_label}: {ans}")
-            y -= 15
-        
-        # Explanation (use Telugu font)
-        if exp:
-            if font_name:
-                try:
-                    c.setFont(font_name, 10)
+                    c.drawString(70, y - 10, f"{ans_label}: {ans}")
+                    y -= 15
                 except:
+                    y -= 15
+        
+        # Explanation (use Telugu font with wrapping)
+        if exp:
+            try:
+                exp_text = f"{exp_label}: {exp}"
+                y = draw_wrapped_text(c, exp_text, 70, y - 10, available_width, font_name, 10)
+            except Exception as font_error:
+                print(f"Font error for explanation: {font_error}")
+                try:
                     c.setFont("Helvetica", 10)
-            else:
-                c.setFont("Helvetica", 10)
-            c.drawString(70, y, f"{exp_label}: {exp}")
-            y -= 20
+                    c.drawString(70, y - 10, f"{exp_label}: {exp}")
+                    y -= 20
+                except:
+                    y -= 20
         
         y -= 10
     
