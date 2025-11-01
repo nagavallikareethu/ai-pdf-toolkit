@@ -1,0 +1,12 @@
+gradio
+python-dotenv
+google-generativeai
+PyPDF2
+reportlab
+pdfplumber
+pymupdf
+playwright
+tqdm
+sympy
+deep-translator
+requests

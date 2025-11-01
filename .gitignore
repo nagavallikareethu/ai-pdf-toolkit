@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Outputs
+outputs/
+*.pdf
+*.json
+!requirements.json
+
+# Temporary files
+temp/
+*.tmp
+*.log
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation (keep only README.md)
+*.md
+!README.md
+!requirements.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Playwright
+playwright-browsers/
+
+# Gradio
+flagged/
+
