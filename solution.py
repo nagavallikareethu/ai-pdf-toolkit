@@ -435,9 +435,15 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
     c = canvas.Canvas(str(output_pdf), pagesize=A4)
     width, height = A4
     
-    # Title with English font (for reliability)
+    # Title with Telugu font for Indic languages
     y = height - 50
-    c.setFont("Helvetica-Bold", 18)
+    if font_name:
+        try:
+            c.setFont(font_name, 18)
+        except:
+            c.setFont("Helvetica-Bold", 18)
+    else:
+        c.setFont("Helvetica-Bold", 18)
     c.drawCentredString(width / 2, y, title_label)
     y -= 30
     
@@ -478,15 +484,27 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
                 c.drawString(70, y, q_text if lang == "english" else "[Font error]")
             y -= 15
         
-        # Answer
+        # Answer (use Telugu font)
         if ans:
-            c.setFont("Helvetica-Bold", 11)
+            if font_name:
+                try:
+                    c.setFont(font_name, 11)
+                except:
+                    c.setFont("Helvetica-Bold", 11)
+            else:
+                c.setFont("Helvetica-Bold", 11)
             c.drawString(70, y, f"{ans_label}: {ans}")
             y -= 15
         
-        # Explanation
+        # Explanation (use Telugu font)
         if exp:
-            c.setFont("Helvetica", 10)
+            if font_name:
+                try:
+                    c.setFont(font_name, 10)
+                except:
+                    c.setFont("Helvetica", 10)
+            else:
+                c.setFont("Helvetica", 10)
             c.drawString(70, y, f"{exp_label}: {exp}")
             y -= 20
         
