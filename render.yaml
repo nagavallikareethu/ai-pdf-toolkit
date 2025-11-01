@@ -3,7 +3,7 @@ services:
     name: ai-pdf-toolkit
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && playwright install chromium
     startCommand: python app_gradio.py
     envVars:
       - key: PYTHON_VERSION
