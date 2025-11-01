@@ -283,12 +283,25 @@ SCRIPT_DIR = pathlib.Path(__file__).parent.resolve()
 FONTS_DIR = SCRIPT_DIR / "fonts"
 
 FONTS = {
+    "english": str(FONTS_DIR / "NotoSans-Regular.ttf"),  # ADDED ENGLISH FONT
     "telugu": str(FONTS_DIR / "NotoSansTelugu-Regular.ttf"),
     "hindi":  str(FONTS_DIR / "TiroDevanagariHindi-Regular.ttf"),
     "odia":   str(FONTS_DIR / "AnekOdia-Regular.ttf"),
     "tamil":  str(FONTS_DIR / "NotoSansTamil-Regular.ttf"),
     "kannada": str(FONTS_DIR / "NotoSansKannada-Regular.ttf"),
 }
+
+# FONT REGISTRATION FUNCTION - ADDED
+def register_reportlab_fonts():
+    """Register all fonts with ReportLab"""
+    for lang, font_path in FONTS.items():
+        if os.path.exists(font_path):
+            try:
+                font_name = lang.capitalize()
+                pdfmetrics.registerFont(TTFont(font_name, font_path))
+                print(f"✅ Registered font: {font_name}")
+            except Exception as e:
+                print(f"❌ Failed to register {lang}: {e}")
 
 def detect_language_sample(data):
     if not data:
@@ -399,16 +412,14 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
     output_path = pathlib.Path(output_pdf)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Register fonts
-    font_file = FONTS.get(lang, None)
+    # Register fonts first - FIXED
+    register_reportlab_fonts()
+    
+    # Get correct font name
     font_name = None
+    font_file = FONTS.get(lang, None)
     if font_file and os.path.exists(font_file):
-        try:
-            font_name = lang.capitalize()
-            pdfmetrics.registerFont(TTFont(font_name, font_file))
-        except Exception as e:
-            print(f"Could not register font: {e}")
-            font_name = None
+        font_name = lang.capitalize()
     
     # Language labels
     lang_labels = {
@@ -425,31 +436,13 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
     c = canvas.Canvas(str(output_pdf), pagesize=A4)
     width, height = A4
     
-    # Set font
-    if font_name:
-        try:
-            c.setFont(font_name, 14)
-        except:
-            c.setFont("Helvetica", 14)
-    else:
-        c.setFont("Helvetica", 14)
-    
-    # Title
+    # Title with English font (for reliability)
     y = height - 50
     c.setFont("Helvetica-Bold", 18)
     c.drawCentredString(width / 2, y, title_label)
     y -= 30
     
-    # Reset font
-    if font_name:
-        try:
-            c.setFont(font_name, 12)
-        except:
-            c.setFont("Helvetica", 12)
-    else:
-        c.setFont("Helvetica", 12)
-    
-    # Process data
+    # Process data with proper font handling - FIXED
     suffix = f"_{lang}"
     for i, item in enumerate(data, start=1):
         q_no = clean(item.get("question_number", str(i)))
@@ -463,30 +456,32 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
         # Check if we need a new page
         if y < 100:
             c.showPage()
-            if font_name:
-                try:
-                    c.setFont(font_name, 12)
-                except:
-                    c.setFont("Helvetica", 12)
-            else:
-                c.setFont("Helvetica", 12)
             y = height - 50
         
-        # Question number
+        # Question number (English font)
         c.setFont("Helvetica-Bold", 14)
         c.drawString(50, y, f"Q{q_no}.")
         y -= 20
         
-        # Question text
+        # Question text (Try Telugu font, fallback to English) - FIXED
         if q_text:
-            if font_name:
-                try:
+            try:
+                if font_name:
+                    # Test if font can render the text
                     c.setFont(font_name, 12)
-                except:
+                    # Draw a small test first
+                    test_text = q_text[:10] if len(q_text) > 10 else q_text
+                    c.drawString(70, y, test_text)
+                    # If successful, draw the full text
+                    c.drawString(70, y, q_text)
+                else:
                     c.setFont("Helvetica", 12)
-            else:
+                    c.drawString(70, y, q_text)
+            except Exception as font_error:
+                # Fallback to English font if Telugu fails
+                print(f"Font error, using fallback: {font_error}")
                 c.setFont("Helvetica", 12)
-            c.drawString(70, y, q_text)
+                c.drawString(70, y, q_text)
             y -= 15
         
         # Answer
@@ -508,6 +503,9 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
 
 async def render_pdf_from_data(data, lang, output_pdf):
     """Unified PDF generation with Playwright and ReportLab fallback"""
+    # Register fonts at the start - ADDED
+    register_reportlab_fonts()
+    
     try:
         # Try Playwright first
         if await render_pdf_from_data_playwright(data, lang, output_pdf):
