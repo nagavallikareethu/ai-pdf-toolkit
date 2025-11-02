@@ -17,6 +17,7 @@ import tempfile
 import pathlib
 import html
 import asyncio
+import time
 from dotenv import load_dotenv
 from tqdm import tqdm
 
@@ -257,16 +258,44 @@ Original Answer: {a}
 Original Explanation: {e}
 
 Generate translation:"""
-        try:
-            response = model.generate_content(prompt)
-            parsed = extract_inner_json(response.text.strip())
-            if parsed:
-                merged = {**item, **parsed}
-            else:
-                merged = {**item, f"raw_translation_{lang_lower}": response.text.strip()}
-            translated.append(merged)
-        except Exception as err:
-            item[f"translation_error_{lang_lower}"] = str(err)
+        
+        # Retry logic for rate limits
+        max_retries = 3
+        retry_delay = 2
+        success = False
+        
+        for attempt in range(max_retries):
+            try:
+                response = model.generate_content(prompt)
+                parsed = extract_inner_json(response.text.strip())
+                if parsed:
+                    merged = {**item, **parsed}
+                else:
+                    merged = {**item, f"raw_translation_{lang_lower}": response.text.strip()}
+                translated.append(merged)
+                success = True
+                break
+            except Exception as err:
+                error_str = str(err)
+                # Check if it's a rate limit error
+                if "429" in error_str or "quota" in error_str.lower():
+                    if attempt < max_retries - 1:
+                        print(f"Rate limit hit, waiting {retry_delay}s before retry...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                        continue
+                    else:
+                        item[f"translation_error_{lang_lower}"] = "Max retries exceeded for rate limit"
+                        translated.append(item)
+                        break
+                else:
+                    # Not a rate limit error, don't retry
+                    item[f"translation_error_{lang_lower}"] = str(err)
+                    translated.append(item)
+                    break
+        
+        if not success and f"translation_error_{lang_lower}" not in item:
+            item[f"translation_error_{lang_lower}"] = "Translation failed after retries"
             translated.append(item)
 
     out_file = os.path.join("outputs", f"translated_{lang_lower}_auto.json")
