@@ -69,13 +69,30 @@ def extract_json_block(text: str) -> str:
 def extract_inner_json(text):
     if not text:
         return None
+    
+    # Try to extract from markdown code blocks first
     match = re.search(r"```json\s*(.*?)```", text, re.DOTALL)
     if match:
         inner = match.group(1)
         try:
             return json.loads(inner)
         except Exception:
-            return None
+            pass
+    
+    # Try to parse the entire text as JSON (for plain JSON responses)
+    try:
+        return json.loads(text.strip())
+    except Exception:
+        pass
+    
+    # Try to find JSON object in text (fallback)
+    match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            pass
+    
     return None
 
 # -------------------------
@@ -237,16 +254,22 @@ LANGUAGES = {
 def translate_items(items, target_lang):
     lang_lower = target_lang.lower()
     translated = []
-    for item in tqdm(items, desc=f"Translating → {target_lang}"):
+    for idx, item in enumerate(tqdm(items, desc=f"Translating → {target_lang}")):
         q = item.get("question_text", "")
         a = item.get("answer", "")
         e = item.get("explanation", "")
+
+        # Add small delay between requests to avoid rate limits (except first request)
+        if idx > 0:
+            time.sleep(0.5)
 
         prompt = f"""Translate the following solved MCQ into {target_lang}. Keep all numbers, symbols, and math expressions unchanged.
 
 IMPORTANT: For Indic languages ({target_lang}), ensure proper spacing between words.
 
-Return output STRICTLY as JSON (no markdown, no code blocks):
+CRITICAL: You must return ONLY valid JSON (no markdown, no code blocks, no explanations). The response must start with {{ and end with }}.
+
+Required JSON format (copy this structure exactly):
 {{
   "question_text_{lang_lower}": "translated question with proper spacing",
   "answer_{lang_lower}": "translated answer with proper spacing",  
@@ -257,7 +280,7 @@ Original Question: {q}
 Original Answer: {a}
 Original Explanation: {e}
 
-Generate translation:"""
+Return the translation as JSON only:"""
         
         # Retry logic for rate limits
         max_retries = 3
@@ -267,36 +290,76 @@ Generate translation:"""
         for attempt in range(max_retries):
             try:
                 response = model.generate_content(prompt)
-                parsed = extract_inner_json(response.text.strip())
+                response_text = response.text.strip()
+                parsed = extract_inner_json(response_text)
+                
                 if parsed:
+                    # Successfully parsed JSON
                     merged = {**item, **parsed}
+                    translated.append(merged)
+                    success = True
+                    break
                 else:
-                    merged = {**item, f"raw_translation_{lang_lower}": response.text.strip()}
-                translated.append(merged)
-                success = True
-                break
+                    # JSON parsing failed, try to extract fields from raw response
+                    print(f"Warning: Failed to parse JSON for question {item.get('question_number', '?')}. Attempting fallback extraction...")
+                    
+                    # Try to extract translated fields using regex patterns
+                    fallback_parsed = {}
+                    q_key = f"question_text_{lang_lower}"
+                    a_key = f"answer_{lang_lower}"
+                    e_key = f"explanation_{lang_lower}"
+                    
+                    # Try to find fields in the response text
+                    q_match = re.search(rf'"{q_key}"\s*:\s*"([^"]+)"', response_text, re.IGNORECASE)
+                    a_match = re.search(rf'"{a_key}"\s*:\s*"([^"]+)"', response_text, re.IGNORECASE)
+                    e_match = re.search(rf'"{e_key}"\s*:\s*"([^"]+)"', response_text, re.IGNORECASE)
+                    
+                    if q_match:
+                        fallback_parsed[q_key] = q_match.group(1)
+                    if a_match:
+                        fallback_parsed[a_key] = a_match.group(1)
+                    if e_match:
+                        fallback_parsed[e_key] = e_match.group(1)
+                    
+                    if fallback_parsed:
+                        merged = {**item, **fallback_parsed}
+                        translated.append(merged)
+                        success = True
+                        print(f"Successfully extracted translation fields using fallback method.")
+                        break
+                    else:
+                        # Store raw response for debugging
+                        merged = {**item, f"raw_translation_{lang_lower}": response_text}
+                        translated.append(merged)
+                        print(f"Error: Could not extract translation for question {item.get('question_number', '?')}. Raw response stored.")
+                        success = True  # Mark as processed to avoid retry
+                        break
+                        
             except Exception as err:
                 error_str = str(err)
                 # Check if it's a rate limit error
                 if "429" in error_str or "quota" in error_str.lower():
                     if attempt < max_retries - 1:
-                        print(f"Rate limit hit, waiting {retry_delay}s before retry...")
+                        print(f"Rate limit hit for question {item.get('question_number', '?')}, waiting {retry_delay}s before retry...")
                         time.sleep(retry_delay)
                         retry_delay *= 2  # Exponential backoff
                         continue
                     else:
                         item[f"translation_error_{lang_lower}"] = "Max retries exceeded for rate limit"
                         translated.append(item)
+                        print(f"Error: Translation failed for question {item.get('question_number', '?')} after {max_retries} retries due to rate limit.")
                         break
                 else:
                     # Not a rate limit error, don't retry
                     item[f"translation_error_{lang_lower}"] = str(err)
                     translated.append(item)
+                    print(f"Error: Translation failed for question {item.get('question_number', '?')}: {err}")
                     break
         
         if not success and f"translation_error_{lang_lower}" not in item:
             item[f"translation_error_{lang_lower}"] = "Translation failed after retries"
             translated.append(item)
+            print(f"Error: Translation failed for question {item.get('question_number', '?')} after all retries.")
 
     out_file = os.path.join("outputs", f"translated_{lang_lower}_auto.json")
     with open(out_file, "w", encoding="utf-8") as f:
