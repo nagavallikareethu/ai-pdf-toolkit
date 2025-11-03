@@ -213,10 +213,48 @@ Return only 2-line explanation text.
             page_questions = []
             for i, match in enumerate(valid_questions):
                 q_num = match.group(1)
-                start_pos = match.start()
+                match_start = match.start()
+                
+                # Look backwards to find where this question actually starts
+                # Look for previous question end (next question number or sentence end)
+                if i > 0:
+                    prev_match_end = valid_questions[i-1].start()
+                    # Look back from current question number to find the start
+                    # Usually starts after previous question's options or end marker
+                    # Search backwards for sentence end, option end, or previous question number
+                    lookback_start = max(0, prev_match_end - 500)  # Look back up to 500 chars
+                    context_before = text[lookback_start:match_start]
+                    
+                    # Find the actual start - look for patterns like:
+                    # 1. Previous question number followed by complete question
+                    # 2. Sentence ending before current question
+                    # 3. Options ending (1) 2) 3) 4) 5))
+                    prev_q_end = None
+                    # Try to find end of previous question
+                    if i > 0:
+                        prev_q_num = valid_questions[i-1].group(1)
+                        # Look for previous question's options or question mark
+                        prev_end_match = re.search(rf'{prev_q_num}\.\s+[^?]*\?[^?]*?[1-5]\)\s+[^0-9]+', context_before, re.DOTALL)
+                        if prev_end_match:
+                            prev_q_end = lookback_start + prev_end_match.end()
+                        else:
+                            # Look for previous question mark
+                            prev_qm = context_before.rfind('?')
+                            if prev_qm > len(context_before) - 200:  # If close to current question
+                                prev_q_end = lookback_start + prev_qm + 1
+                            else:
+                                prev_q_end = prev_match_end
+                    else:
+                        prev_q_end = 0
+                    
+                    start_pos = max(prev_q_end, match_start - 100)  # Start at most 100 chars before question number
+                else:
+                    start_pos = max(0, match_start - 100)  # For first question, look back up to 100 chars
+                
                 # Find end position (next question number or end of text)
                 if i + 1 < len(valid_questions):
-                    end_pos = valid_questions[i + 1].start()
+                    next_match_start = valid_questions[i + 1].start()
+                    end_pos = min(next_match_start, len(text))
                 else:
                     end_pos = len(text)
                 
@@ -239,28 +277,69 @@ Return only 2-line explanation text.
                 q_text = re.sub(r'MTS\s+CGL\s+CHSL[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
                 q_text = re.sub(r'MODEL\s+TEST[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
                 
-                # Find the actual question (starts with a meaningful word)
-                question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4})', q_text, re.IGNORECASE)
-                if question_start:
-                    q_text = q_text[question_start.start():]
+                # Find the actual question - look for question text that might start before the number
+                # First, try to find the question number and extract from there
+                q_num_pattern = rf'\b{q_num}\.\s*'
+                q_num_match = re.search(q_num_pattern, q_text, re.IGNORECASE)
                 
-                # Extract complete question - should end with ? and have options or be complete
-                # First, try to find a complete question ending with ?
-                q_match = re.search(r'([^?]*\?)', q_text)
-                if q_match:
-                    q_text = q_match.group(1).strip()
+                if q_num_match:
+                    # Found question number, extract text starting from it
+                    q_text_after_num = q_text[q_num_match.end():].strip()
+                    # Now find where the actual question text starts
+                    question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|A\s+sum|A\s+tap|A\s+boat|A\s+shopkeeper|Sirisha|The\s+population|Area\s+of|The\s+ratio)', q_text_after_num, re.IGNORECASE)
+                    if question_start:
+                        # Question starts here, include the number too
+                        q_text = f"{q_num}. {q_text_after_num[question_start.start():]}"
+                    else:
+                        # No clear start found, use text after number as-is
+                        q_text = f"{q_num}. {q_text_after_num}"
                 else:
-                    # If no ?, the question might be incomplete - skip it or try to complete it
-                    # Look for option markers (1), 2), 3), 4), 5)) or "Answer:" to mark end
-                    option_match = re.search(r'1\)\s+[^0-9]+2\)\s+[^0-9]+3\)\s+[^0-9]+4\)\s+[^0-9]+5\)', q_text)
+                    # Question number not found in text, try to find where question starts
+                    question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4})', q_text, re.IGNORECASE)
+                    if question_start:
+                        q_text = q_text[question_start.start():]
+                
+                # Extract complete question - preserve full question text
+                # First, check if question has a question mark
+                if '?' not in q_text:
+                    # No question mark - might be incomplete or pattern question
+                    # Look for option markers (1), 2), 3), 4), 5)) to find end
+                    option_match = re.search(r'1\)\s+|2\)\s+|3\)\s+|4\)\s+|5\)\s+', q_text)
                     if option_match:
                         # Question continues to options, extract everything up to options
                         q_text = q_text[:option_match.start()].strip()
+                    # If it's a number series or pattern question, keep it as-is
+                    elif re.search(r'^\d+\.\s*\d+\s+\d+', q_text) or re.search(r'What\s+should\s+come|what\s+will\s+come', q_text, re.IGNORECASE):
+                        # Pattern question, keep as-is
+                        pass
                     else:
-                        # If question doesn't have ? and no options, it's likely incomplete
-                        # Skip questions that are too short or don't look complete
-                        if len(q_text) < 30 or not re.search(r'\?|Find|Calculate|What|How|Which|Total|Average', q_text, re.IGNORECASE):
-                            continue  # Skip incomplete questions
+                        # Likely incomplete - skip if too short
+                        if len(q_text) < 30:
+                            continue
+                else:
+                    # Has question mark - extract up to the question mark (including all context)
+                    # Find the last question mark (there might be multiple)
+                    q_marks = [m.end() for m in re.finditer(r'\?', q_text)]
+                    if q_marks:
+                        # Use the last question mark as the end, but include some context after if needed
+                        last_q_pos = q_marks[-1]
+                        # Check if there are options after the question mark
+                        text_after_q = q_text[last_q_pos:].strip()
+                        if re.search(r'1\)\s+|2\)\s+|3\)\s+|4\)\s+|5\)\s+', text_after_q):
+                            # Options found after question mark, extract up to question mark only
+                            q_text = q_text[:last_q_pos].strip()
+                        else:
+                            # No options after, might be complete question ending with ?
+                            # Check if there's more content that should be included
+                            # Look for "in Lakhs", "(Approximately)", etc. that might be part of question
+                            if re.search(r'\(in\s+Lakhs\)|\(Approximately\)|\(in\s+[A-Z]+\)', text_after_q, re.IGNORECASE):
+                                # Include this context too
+                                context_end = re.search(r'\(in\s+Lakhs\)|\(Approximately\)|\(in\s+[A-Z]+\)', text_after_q, re.IGNORECASE)
+                                if context_end:
+                                    q_text = q_text[:last_q_pos + context_end.end()].strip()
+                            else:
+                                # Just extract up to question mark
+                                q_text = q_text[:last_q_pos].strip()
                 
                 # Clean up: remove leading question number and any whitespace
                 q_text = re.sub(rf'^{q_num}\.\s*', '', q_text).strip()
