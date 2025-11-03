@@ -396,17 +396,33 @@ async def save_pdf_playwright(text, outpath, lang):
                 else:
                     # Check if options are embedded in content (for fallback)
                     content_text = q.get("content", "")
-                    # Look for options in content that weren't parsed separately
-                    if re.search(r'[A-E]\)|[1-5]\)', content_text):
-                        # Options found in content - try to extract them
-                        options_found = re.findall(r'([A-E]\)|[1-5]\))\s*([^<]+)', content_text)
-                        if options_found and len(options_found) >= 2:
-                            options_html = '<div style="margin: 8px 0;"><strong>Options:</strong><br>'
-                            for opt_marker, opt_text in options_found[:5]:
-                                opt_text_clean = re.sub(r'<br>|<[^>]+>', '', opt_text).strip()
-                                options_html += f'<span style="margin-right: 15px;"><span style="font-family: Arial, sans-serif;">{opt_marker}</span> {clean_text_html(opt_text_clean)}</span><br>'
-                            options_html += '</div>'
-                            q_html += options_html
+                    # Look for options starting with just ")" in content
+                    plain_content = re.sub(r'<br\s*/?>', '\n', content_text, flags=re.IGNORECASE)
+                    plain_content = re.sub(r'<[^>]+>', ' ', plain_content)
+                    lines = plain_content.split('\n')
+                    options_found = []
+                    for line in lines:
+                        line = line.strip()
+                        if re.match(r'\)\s*[^\s)]', line):
+                            opt_text = re.sub(r'^\)\s*', '', line).strip()
+                            if opt_text:
+                                options_found.append(opt_text)
+                                if len(options_found) >= 4:
+                                    break
+                    
+                    if options_found and len(options_found) >= 2:
+                        # Assign letters and display
+                        option_letters = ['A', 'B', 'C', 'D']
+                        options_html = '<div style="margin: 8px 0;"><strong>Options:</strong><br>'
+                        for i, opt_text in enumerate(options_found[:4]):
+                            opt_letter = option_letters[i]
+                            options_html += f'<span style="margin-right: 15px;"><span style="font-family: Arial, sans-serif;">{opt_letter})</span> {clean_text_html(opt_text)}</span><br>'
+                        options_html += '</div>'
+                        q_html += options_html
+                        # Also update the question dict so it's saved
+                        if not q.get("options"):
+                            q["options"] = [f"{option_letters[i]}) {text.strip()}" 
+                                          for i, text in enumerate(options_found[:4])]
                 # Answer - handle multiple formats
                 if q.get("answer"):
                     # Extract answer value - try multiple patterns
