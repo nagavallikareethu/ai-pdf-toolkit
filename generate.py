@@ -88,7 +88,7 @@ C) 5
 D) 6
 Answer: B
 
-Document content:
+2Document content:
 {pdf_text[:10000]}
 
 Now generate {n} MCQs following the format above EXACTLY. Remember: 
@@ -244,10 +244,22 @@ def parse_mcq_text(text):
                 current_q['options'] = [f"{marker.strip()} {text.strip()}" for marker, text in options_in_content[:5]]
             else:
                 # Fallback: look for lines that start with just ")" - assign letters
-                # Remove HTML tags first to get plain text
-                plain_text = re.sub(r'<[^>]+>', ' ', content_text)
-                # Find all lines that start with just ")" followed by text
-                just_paren_options = re.findall(r'\)\s+([^)\n]+)', plain_text)
+                # Remove HTML tags first to get plain text, replace <br> with newline
+                plain_text = re.sub(r'<br\s*/?>', '\n', content_text, flags=re.IGNORECASE)
+                plain_text = re.sub(r'<[^>]+>', ' ', plain_text)
+                # Split by newline and find lines starting with ")"
+                lines = plain_text.split('\n')
+                just_paren_options = []
+                for line in lines:
+                    line = line.strip()
+                    if re.match(r'\)\s*[^\s)]', line):  # Line starts with ) followed by non-whitespace
+                        # Extract text after )
+                        opt_text = re.sub(r'^\)\s*', '', line).strip()
+                        if opt_text and len(opt_text) > 0:
+                            just_paren_options.append(opt_text)
+                            if len(just_paren_options) >= 4:
+                                break
+                
                 if just_paren_options and len(just_paren_options) >= 2:
                     # Assign sequential letters A, B, C, D
                     option_letters = ['A', 'B', 'C', 'D']
