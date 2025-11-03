@@ -191,19 +191,27 @@ Return only 2-line explanation text.
             continue
 
         # 2) Fallback to LLM for MCQs / textual questions
-        prompt = f"""You are an expert exam solver. Extract and solve ALL questions and MCQs from the text below.
+        prompt = f"""You are an expert exam solver. Extract and solve ONLY the actual questions from the text below.
+
+CRITICAL INSTRUCTIONS:
+1. IGNORE all headers, footers, exam names, directions, instructions, and metadata (like "Sreedhar's CCE", "PRELIMS MT", "NUMERICAL ABILITY", etc.)
+2. IGNORE chart descriptions, table titles, and data descriptions
+3. Extract ONLY the numbered questions (e.g., "31.", "32.", "33.", etc.)
+4. Each question_text should contain ONLY the actual question text, not headers or directions
+5. Remove any prefix text before the question number
+6. Remove any "Directions" or instruction paragraphs
 
 For each question found:
-- question_number: The question number if present
-- question_text: The complete question text as written
-- answer: The correct answer (option letter like A, B, C, D or the answer text)
+- question_number: The question number (e.g., "31", "32", "33")
+- question_text: ONLY the actual question text without headers/directions (e.g., "Find the ratio of total students..." NOT "31. 1 Sreedhar's CCE... Find the ratio...")
+- answer: The correct answer (option letter like A, B, C, D or the answer value)
 - explanation: A concise 2-line explanation of why this answer is correct
 
 CRITICAL: Return ONLY a JSON array (no markdown, no code blocks, no other text).
 Example format:
 [
-  {{"question_number": "1", "question_text": "...", "answer": "A", "explanation": "..."}},
-  {{"question_number": "2", "question_text": "...", "answer": "B", "explanation": "..."}}
+  {{"question_number": "31", "question_text": "Find the ratio of total students registered for all the three exams in 2012 and 2013 together to total students registered for all the three exams in 2014 and 2015 together?", "answer": "3", "explanation": "..."}},
+  {{"question_number": "32", "question_text": "Average number of students registered for MTS exam in all the five years together is how much less/more than the average number of students registered for CHSL exam in all the five years together?", "answer": "2", "explanation": "..."}}
 ]
 
 Input text:
