@@ -193,25 +193,33 @@ Return only 2-line explanation text.
         # 2) Fallback to LLM for MCQs / textual questions
         prompt = f"""You are an expert exam solver. Extract and solve ONLY the actual questions from the text below.
 
-CRITICAL INSTRUCTIONS:
-1. IGNORE all headers, footers, exam names, directions, instructions, and metadata (like "Sreedhar's CCE", "PRELIMS MT", "NUMERICAL ABILITY", etc.)
-2. IGNORE chart descriptions, table titles, and data descriptions
-3. Extract ONLY the numbered questions (e.g., "31.", "32.", "33.", etc.)
-4. Each question_text should contain ONLY the actual question text, not headers or directions
-5. Remove any prefix text before the question number
-6. Remove any "Directions" or instruction paragraphs
+CRITICAL INSTRUCTIONS - READ CAREFULLY:
+1. IGNORE ALL of the following - DO NOT include them in question_text:
+   - Headers like "Sreedhar's CCE", "SBI CLERK", "LIC Asst.", "PRELIMS MT", "NIACL Asst.", "TIER-I"
+   - Section titles like "NUMERICAL ABILITY"
+   - Directions/Instructions like "Directions (31-35): Study the data carefully..."
+   - Chart/Table descriptions like "The Bar-chart shows students registered..."
+   - Page numbers, footer text, exam metadata
+   
+2. Extract ONLY the numbered questions that start with digits followed by a period (e.g., "31.", "32.", "33.")
 
-For each question found:
-- question_number: The question number (e.g., "31", "32", "33")
-- question_text: ONLY the actual question text without headers/directions (e.g., "Find the ratio of total students..." NOT "31. 1 Sreedhar's CCE... Find the ratio...")
-- answer: The correct answer (option letter like A, B, C, D or the answer value)
-- explanation: A concise 2-line explanation of why this answer is correct
+3. For each question, the question_text field should contain:
+   - ONLY the actual question text starting from the question itself
+   - NOT any text before the question number
+   - Example CORRECT: "Find the ratio of total students registered for all the three exams in 2012 and 2013 together to total students registered for all the three exams in 2014 and 2015 together?"
+   - Example WRONG: "31. 1 Sreedhar's CCE SBI CLERK... Find the ratio..." (DO NOT include headers/directions)
 
-CRITICAL: Return ONLY a JSON array (no markdown, no code blocks, no other text).
+4. question_number should be just the number (e.g., "31", "32", "33") without any prefix
+
+5. answer should be the correct option number (e.g., "1", "2", "3", "4", "5") or the option letter/value
+
+6. explanation should be a concise 2-line explanation
+
+CRITICAL: Return ONLY a JSON array (no markdown, no code blocks, no other text). Start with [ and end with ].
 Example format:
 [
-  {{"question_number": "31", "question_text": "Find the ratio of total students registered for all the three exams in 2012 and 2013 together to total students registered for all the three exams in 2014 and 2015 together?", "answer": "3", "explanation": "..."}},
-  {{"question_number": "32", "question_text": "Average number of students registered for MTS exam in all the five years together is how much less/more than the average number of students registered for CHSL exam in all the five years together?", "answer": "2", "explanation": "..."}}
+  {{"question_number": "31", "question_text": "Find the ratio of total students registered for all the three exams in 2012 and 2013 together to total students registered for all the three exams in 2014 and 2015 together?", "answer": "3", "explanation": "Total students in 2012+2013 = X. Total in 2014+2015 = Y. Ratio = X:Y."}},
+  {{"question_number": "32", "question_text": "Average number of students registered for MTS exam in all the five years together is how much less/more than the average number of students registered for CHSL exam in all the five years together?", "answer": "2", "explanation": "Calculate average MTS and average CHSL, then find the difference."}}
 ]
 
 Input text:
@@ -225,6 +233,30 @@ Input text:
                 parsed = json.loads(raw_output)
                 if isinstance(parsed, dict):
                     parsed = [parsed]
+                
+                # Clean extracted questions to remove headers/directions
+                if isinstance(parsed, list):
+                    for q in parsed:
+                        q_text = q.get("question_text", "")
+                        if q_text:
+                            # Remove common headers/directions that might leak through
+                            q_text = re.sub(r'^.*?Sreedhar\'s\s+CCE[^?]*?\?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                            q_text = re.sub(r'^.*?NUMERICAL\s+ABILITY[^?]*?\?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                            q_text = re.sub(r'^.*?Directions\s*\([^)]+\)[^?]*?\?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                            q_text = re.sub(r'^.*?PRELIMS\s+MT[^?]*?\?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                            q_text = re.sub(r'^.*?Study\s+the\s+data[^?]*?\?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                            # Remove leading question number if followed by unwanted text
+                            q_text = re.sub(r'^\d+\.\s*\d+\s+[A-Z\s]+(?:PRELIMS|MT|NUMERICAL|Directions)[^?]*?\?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                            # Clean up multiple spaces
+                            q_text = re.sub(r'\s+', ' ', q_text).strip()
+                            q["question_text"] = q_text
+                        
+                        # Ensure question_number is present and clean
+                        if "question_number" not in q or not q["question_number"]:
+                            # Try to extract from question_text
+                            match = re.search(r'^(\d+)\.', q_text)
+                            if match:
+                                q["question_number"] = match.group(1)
             except Exception:
                 # if JSON parsing fails, keep raw_output
                 parsed = [{"question_text": text, "raw_output": raw_output}]
@@ -236,6 +268,23 @@ Input text:
                 "method": "gemini_fallback"
             })
 
+    # Sort results by question_number to maintain sequence
+    def get_qnum(q):
+        qnum = q.get("question_number", "")
+        try:
+            return int(qnum)
+        except (ValueError, TypeError):
+            # If not a number, try to extract from question_text
+            match = re.search(r'^(\d+)\.', str(q.get("question_text", "")))
+            if match:
+                try:
+                    return int(match.group(1))
+                except:
+                    pass
+            return 9999  # Put unnumbered items at the end
+    
+    results.sort(key=get_qnum)
+    
     # Save solved file
     os.makedirs("outputs", exist_ok=True)
     solved_path = os.path.join("outputs", "solved_extracted_data.json")
@@ -386,6 +435,23 @@ Return ONLY the JSON object:"""
             translated.append(item)
             print(f"Error: Translation failed for question {item.get('question_number', '?')} after all retries.")
 
+    # Sort translated results by question_number to maintain sequence
+    def get_qnum_translated(q):
+        qnum = q.get("question_number", "")
+        try:
+            return int(qnum)
+        except (ValueError, TypeError):
+            # If not a number, try to extract from question_text
+            match = re.search(r'^(\d+)\.', str(q.get("question_text", "") or q.get(f"question_text_{lang_lower}", "")))
+            if match:
+                try:
+                    return int(match.group(1))
+                except:
+                    pass
+            return 9999  # Put unnumbered items at the end
+    
+    translated.sort(key=get_qnum_translated)
+    
     out_file = os.path.join("outputs", f"translated_{lang_lower}_auto.json")
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump(translated, f, ensure_ascii=False, indent=2)
