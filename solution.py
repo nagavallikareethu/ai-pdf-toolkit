@@ -736,17 +736,20 @@ def translate_items(items, target_lang):
         if idx > 0:
             time.sleep(0.5)
 
-        prompt = f"""Translate the following solved MCQ into {target_lang}. Keep all numbers, symbols, and math expressions unchanged.
+        prompt = f"""Translate the following solved MCQ into {target_lang}. 
 
-IMPORTANT: For Indic languages ({target_lang}), ensure proper spacing between words.
+IMPORTANT INSTRUCTIONS:
+1. Translate the question_text completely into {target_lang} with proper spacing between words
+2. For answer: Keep numbers and option numbers unchanged (e.g., "3", "2", "15%"). Only translate if it's text.
+3. Translate the explanation completely into {target_lang} with proper spacing. Include all calculations and reasoning in {target_lang}.
 
 CRITICAL: You MUST return ONLY valid JSON (no markdown, no code blocks, no explanations, no additional text). The response must start with {{ and end with }}.
 
 Required JSON format (copy this structure exactly):
 {{
-  "question_text_{lang_lower}": "translated question with proper spacing",
-  "answer_{lang_lower}": "translated answer with proper spacing",  
-  "explanation_{lang_lower}": "translated explanation with proper spacing"
+  "question_text_{lang_lower}": "fully translated question in {target_lang} with proper spacing",
+  "answer_{lang_lower}": "{a}",
+  "explanation_{lang_lower}": "fully translated explanation in {target_lang} with proper spacing, including all calculations"
 }}
 
 DO NOT include any text before or after the JSON object. Start with {{ and end with }}.
