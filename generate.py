@@ -179,9 +179,7 @@ def parse_mcq_text(text):
     if current_q:
         if current_q['parts']:
             current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
-        if current_q.get('options'):
-            # Add options to content
-            current_q['content'] += '<br><br>' + '<br>'.join(current_q['options'])
+        # Don't add options to content - they'll be displayed separately
         questions.append(current_q)
     
     return questions if questions else None
@@ -253,22 +251,58 @@ async def save_pdf_playwright(text, outpath, lang):
         # Parse MCQs properly
         questions = parse_mcq_text(clean_text)
         
+        # Debug: Print raw text if parsing fails (to check what Gemini is generating)
+        if not questions:
+            print(f"Warning: MCQ parsing failed. Raw text preview (first 500 chars):\n{clean_text[:500]}")
+        
         if questions:
             # Build structured HTML for each question
             content_parts = []
             for q in questions:
                 q_html = f'<div class="question">'
-                # Question number
-                q_html += f'<div class="question-number">Q{q["number"]}.</div>'
+                # Question number - use English font for numbers
+                q_html += f'<div class="question-number"><span style="font-family: Arial, sans-serif;">Q{q["number"]}.</span></div>'
                 # Question content
                 q_html += f'<div class="question-content">{q["content"]}</div>'
-                # Options (if separate from content)
+                # Options (if separate from content) - use English font for markers
                 if q.get("options") and len(q["options"]) > 0:
                     options_html = '<div style="margin: 8px 0;"><strong>Options:</strong><br>'
                     for opt in q["options"]:
-                        options_html += f'<span style="margin-right: 15px;">{opt}</span><br>'
+                        # Ensure option markers (A), B), C), D) or 1), 2), 3), 4)) use English font
+                        # Extract marker and text, render marker with English font
+                        opt_match = re.match(r'^([A-E]\)|[1-5]\))\s*(.*)', opt, re.IGNORECASE)
+                        if opt_match:
+                            opt_marker = opt_match.group(1)
+                            opt_text = opt_match.group(2)
+                            # Marker in English font, text in Indic font
+                            options_html += f'<span style="margin-right: 15px;"><span style="font-family: Arial, sans-serif;">{opt_marker}</span> {clean_text_html(opt_text)}</span><br>'
+                        else:
+                            # Fallback: try to find marker anywhere in option
+                            opt_marker_match = re.search(r'([A-E]\)|[1-5]\))', opt, re.IGNORECASE)
+                            if opt_marker_match:
+                                marker_pos = opt_marker_match.start()
+                                opt_marker = opt_marker_match.group(1)
+                                opt_text = opt[:marker_pos] + opt[marker_pos + len(opt_marker):]
+                                options_html += f'<span style="margin-right: 15px;"><span style="font-family: Arial, sans-serif;">{opt_marker}</span> {clean_text_html(opt_text.strip())}</span><br>'
+                            else:
+                                # No marker found, display as-is but clean HTML
+                                options_html += f'<span style="margin-right: 15px;">{clean_text_html(opt)}</span><br>'
                     options_html += '</div>'
                     q_html += options_html
+                else:
+                    # Check if options are embedded in content (for fallback)
+                    content_text = q.get("content", "")
+                    # Look for options in content that weren't parsed separately
+                    if re.search(r'[A-E]\)|[1-5]\)', content_text):
+                        # Options found in content - try to extract them
+                        options_found = re.findall(r'([A-E]\)|[1-5]\))\s*([^<]+)', content_text)
+                        if options_found and len(options_found) >= 2:
+                            options_html = '<div style="margin: 8px 0;"><strong>Options:</strong><br>'
+                            for opt_marker, opt_text in options_found[:5]:
+                                opt_text_clean = re.sub(r'<br>|<[^>]+>', '', opt_text).strip()
+                                options_html += f'<span style="margin-right: 15px;"><span style="font-family: Arial, sans-serif;">{opt_marker}</span> {clean_text_html(opt_text_clean)}</span><br>'
+                            options_html += '</div>'
+                            q_html += options_html
                 # Answer - handle multiple formats
                 if q.get("answer"):
                     # Extract answer value - try multiple patterns
@@ -289,10 +323,19 @@ async def save_pdf_playwright(text, outpath, lang):
                                 answer_val = fallback_match.group(1)
                     
                     if answer_val:
-                        q_html += f'<div class="answer">Answer: {answer_val}</div>'
+                        # Use English font for "Answer:" label and value
+                        q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">Answer: {answer_val}</span></div>'
                     else:
-                        # Display as-is if we can't extract
-                        q_html += f'<div class="answer">{clean_text_html(q["answer"])}</div>'
+                        # Display as-is if we can't extract - ensure label uses English font
+                        answer_text = q["answer"]
+                        # Try to extract label and value separately
+                        answer_label_match = re.search(r'(Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತर)\s*[:=]\s*([A-Z0-9]+)', answer_text, re.IGNORECASE)
+                        if answer_label_match:
+                            answer_label = answer_label_match.group(1)
+                            answer_value = answer_label_match.group(2)
+                            q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">Answer: {answer_value}</span></div>'
+                        else:
+                            q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">{clean_text_html(answer_text)}</span></div>'
                 else:
                     # No answer found - might be missing, check if it's in content
                     content_text = q.get("content", "")
