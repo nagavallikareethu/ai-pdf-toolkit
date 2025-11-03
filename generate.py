@@ -45,11 +45,11 @@ def generate_mcqs(pdf_path, n, language):
 
     prompt = f"""You are an expert exam question generator. Read the following document carefully and generate exactly {n} NEW MCQs.
 
-CRITICAL FORMATTING RULES:
+CRITICAL FORMATTING RULES - FOLLOW EXACTLY:
 1. Write questions and options in {language} language
 2. Use ONLY English labels: "Answer:" (NOT "उत्तर:" or "సమాధానం" or any other language label)
-3. Each question MUST have exactly 4 options: A, B, C, D (use English letters A, B, C, D)
-4. Format each question EXACTLY like this example:
+3. Each question MUST have exactly 4 options with English letters: A, B, C, D
+4. Format each question EXACTLY like this example (copy this format EXACTLY):
 
 1. [Question text in {language}]
 A) [Option A text in {language}]
@@ -67,21 +67,33 @@ Answer: C
 
 [Continue for all {n} questions...]
 
-IMPORTANT:
+MANDATORY REQUIREMENTS:
 - Start each question with a number followed by a period (1., 2., 3., etc.)
-- Use English letters A, B, C, D for options (NOT 1, 2, 3, 4)
+- EVERY option MUST start with English letter followed by closing parenthesis: A) B) C) D)
+- DO NOT use just ")" without A, B, C, D
+- DO NOT use numbers 1), 2), 3), 4) - ONLY use A), B), C), D)
 - ALWAYS use "Answer: X" format where X is A, B, C, or D (NOT any other format)
+- Write only one question per line
+- Each option on its own line (A) on one line, B) on next line, etc.)
 - Use proper spacing between questions and options
 - For Indic languages like Telugu, Hindi, Odia: ensure proper spacing between words
-- Write only one question per line
-- Each option on its own line
 - Keep questions concise and professionally written
 - Base questions strictly on the document content below
+
+EXAMPLE FORMAT - COPY EXACTLY:
+1. What is 2+2?
+A) 3
+B) 4
+C) 5
+D) 6
+Answer: B
 
 Document content:
 {pdf_text[:10000]}
 
-Now generate {n} MCQs following the format above EXACTLY. Remember: Use "Answer: X" format with English label!"""
+Now generate {n} MCQs following the format above EXACTLY. Remember: 
+- Use A), B), C), D) for options (NOT just ) or 1), 2), 3), 4))
+- Use "Answer: X" format with English label!"""
 
     model = genai.GenerativeModel("gemini-2.5-pro")
     response = model.generate_content(prompt)
@@ -164,6 +176,16 @@ def parse_mcq_text(text):
                 if not current_q.get('options'):
                     current_q['options'] = []
                 current_q['options'].append(line)
+            # Handle lines that start with just ")" - assign sequential letters A, B, C, D
+            elif re.match(r'^\)\s+', line):
+                # Line starts with just ")" - assign option letter based on count
+                opt_count = len(current_q.get('options', []))
+                if opt_count < 4:
+                    option_letter = ['A', 'B', 'C', 'D'][opt_count]
+                    option_text = line[1:].strip()  # Remove ")" and get text
+                    if not current_q.get('options'):
+                        current_q['options'] = []
+                    current_q['options'].append(f"{option_letter}) {option_text}")
             # Check if line contains option markers anywhere (for mixed content)
             elif re.search(r'\b[A-E]\)\s+|\b[1-5]\)\s+', line, re.IGNORECASE):
                 # Line contains option markers - extract them
@@ -191,10 +213,18 @@ def parse_mcq_text(text):
         # Try to extract options from content if not found separately
         if not current_q.get('options') or len(current_q['options']) == 0:
             content_text = current_q.get('content', '')
-            # Look for options in content
+            # Look for options in content - first try A), B), C), D)
             options_in_content = re.findall(r'(\b[A-E]\)|\b[1-5]\))\s*([^\n<]+)', content_text, re.IGNORECASE)
             if options_in_content and len(options_in_content) >= 2:
                 current_q['options'] = [f"{marker.strip()} {text.strip()}" for marker, text in options_in_content[:5]]
+            else:
+                # Fallback: look for lines that start with just ")" - assign letters
+                just_paren_options = re.findall(r'\)\s+([^\n<]+)', content_text)
+                if just_paren_options and len(just_paren_options) >= 2:
+                    # Assign sequential letters A, B, C, D
+                    option_letters = ['A', 'B', 'C', 'D']
+                    current_q['options'] = [f"{option_letters[i]}) {text.strip()}" 
+                                          for i, text in enumerate(just_paren_options[:4])]
         # Try to extract answer from content if not found separately
         if not current_q.get('answer'):
             content_text = current_q.get('content', '')
