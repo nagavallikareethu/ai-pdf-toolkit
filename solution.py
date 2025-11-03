@@ -443,7 +443,50 @@ Return only 2-line explanation text.
                 if not starts_properly and len(q_text) < 50:
                     continue  # Skip fragments that don't start properly
                 
-                page_questions.append({"num": q_num, "text": q_text})
+                # Extract options from original text after question
+                # Look for options in the format: "1) option1 2) option2 3) option3 4) option4 5) option5"
+                options_text = ""
+                # First, try to find options in the original text segment
+                full_text_segment = text[start_pos:end_pos]
+                # Look for options after the question text
+                # Options typically appear after the question mark or at the end
+                option_pattern = r'(?:^|\s)([1-5]\)\s+[^\d]+?)(?:\s+[1-5]\)\s+[^\d]+?){0,4}'
+                option_match = re.search(r'1\)\s+([^0-9]+?)\s+2\)\s+([^0-9]+?)(?:\s+3\)\s+([^0-9]+?))?(?:\s+4\)\s+([^0-9]+?))?(?:\s+5\)\s+([^0-9]+?))?', full_text_segment, re.IGNORECASE)
+                
+                if not option_match:
+                    # Try alternative pattern: options on same line separated by spaces
+                    option_line = re.search(r'1\)\s+[^?]+?(?:2\)|3\)|4\)|5\))', full_text_segment, re.DOTALL)
+                    if option_line:
+                        # Extract the options line
+                        options_text = option_line.group(0).strip()
+                        # Clean up options text
+                        options_text = re.sub(r'^\d+\.\s*', '', options_text)  # Remove leading question number
+                        options_text = re.sub(r'Sreedhar\'s\s+CCE[^1-5]*', '', options_text, flags=re.IGNORECASE)
+                else:
+                    # Build options string from matches
+                    options_parts = []
+                    for i in range(1, option_match.lastindex + 1):
+                        if option_match.group(i):
+                            options_parts.append(option_match.group(i).strip())
+                    if options_parts:
+                        options_text = " ".join(options_parts)
+                
+                # Also try to find options in the next 500 chars after end_pos
+                if not options_text and end_pos < len(text):
+                    next_text = text[end_pos:end_pos + 500]
+                    option_line = re.search(r'1\)\s+[^?]+?(?:2\)|3\)|4\)|5\))', next_text, re.DOTALL)
+                    if option_line:
+                        options_text = option_line.group(0).strip()
+                
+                # Clean options text
+                if options_text:
+                    # Remove headers/metadata
+                    options_text = re.sub(r'Sreedhar\'s\s+CCE[^1-5]*', '', options_text, flags=re.IGNORECASE)
+                    options_text = re.sub(r'SBI\s+CLERK[^1-5]*', '', options_text, flags=re.IGNORECASE)
+                    options_text = re.sub(r'MODEL\s+TEST[^1-5]*', '', options_text, flags=re.IGNORECASE)
+                    options_text = options_text.strip()
+                
+                page_questions.append({"num": q_num, "text": q_text, "options": options_text})
             
             # Process each question individually with Gemini
             # Include page context for questions that might need chart/table data
@@ -452,24 +495,30 @@ Return only 2-line explanation text.
                 # Add delay between solving requests to avoid rate limits
                 if pq_idx > 0:
                     time.sleep(1)  # 1 second delay between solving requests
+                # Include options in prompt if available
+                options_section = ""
+                if pq.get('options'):
+                    options_section = f"\n\nOPTIONS:\n{pq['options']}"
+                
                 prompt = f"""You are an expert exam solver. Solve this question completely.
 
 PAGE CONTEXT (may contain chart/table data):
 {page_context}
 
 QUESTION {pq['num']}:
-{pq['text']}
+{pq['text']}{options_section}
 
 IMPORTANT:
 1. Use the page context above if the question references data, charts, or tables
 2. If the question appears incomplete, try to solve it with available information
-3. Provide the correct answer option (1, 2, 3, 4, or 5)
+3. Provide the correct answer option (1, 2, 3, 4, or 5) based on the options provided
 4. Provide a complete 2-3 line explanation showing your calculation or reasoning
 
 Return ONLY a JSON object (no array, no markdown, no code blocks). Start with {{ and end with }}:
 {{
   "question_number": "{pq['num']}",
   "question_text": "{pq['text']}",
+  "options": "{pq.get('options', '')}",
   "answer": "1",
   "explanation": "Step-by-step calculation and reasoning (2-3 lines)"
 }}
@@ -492,6 +541,7 @@ Return ONLY the JSON object:"""
                         result = {
                             "question_number": parsed.get("question_number", pq['num']),
                             "question_text": parsed.get("question_text", pq['text']),
+                            "options": parsed.get("options", pq.get('options', '')),
                             "answer": parsed.get("answer", ""),
                             "explanation": parsed.get("explanation", "")
                         }
@@ -545,6 +595,7 @@ Return ONLY the JSON object:"""
                         results.append({
                             "question_number": pq['num'],
                             "question_text": pq['text'],
+                            "options": pq.get('options', ''),
                             "answer": answer,
                             "explanation": explanation if explanation else "Solution calculated."
                         })
@@ -572,6 +623,7 @@ Return ONLY the JSON object:"""
                                 results.append({
                                     "question_number": pq['num'],
                                     "question_text": pq['text'],
+                                    "options": pq.get('options', ''),
                                     "answer": "",
                                     "explanation": "Solution could not be calculated due to API quota limit."
                                 })
@@ -580,6 +632,7 @@ Return ONLY the JSON object:"""
                             results.append({
                                 "question_number": pq['num'],
                                 "question_text": pq['text'],
+                                "options": pq.get('options', ''),
                                 "answer": "",
                                 "explanation": "Solution could not be calculated due to API quota limit."
                             })
@@ -589,6 +642,7 @@ Return ONLY the JSON object:"""
                         results.append({
                             "question_number": pq['num'],
                             "question_text": pq['text'],
+                            "options": pq.get('options', ''),
                             "answer": "",
                             "explanation": "Solution could not be calculated. Please try again later."
                         })
@@ -776,6 +830,7 @@ def translate_items(items, target_lang):
     translated = []
     for idx, item in enumerate(tqdm(items, desc=f"Translating → {target_lang}")):
         q = item.get("question_text", "")
+        opts = item.get("options", "")
         a = item.get("answer", "")
         e = item.get("explanation", "")
 
@@ -784,25 +839,32 @@ def translate_items(items, target_lang):
         if idx > 0:
             time.sleep(2)  # Increased delay to 2 seconds between translations
 
+        # Include options in prompt if available
+        options_section = ""
+        if opts:
+            options_section = f"\nOriginal Options: {opts}"
+
         prompt = f"""Translate the following solved MCQ into {target_lang}. 
 
 IMPORTANT INSTRUCTIONS:
 1. Translate the question_text completely into {target_lang} with proper spacing between words
-2. For answer: Keep numbers and option numbers unchanged (e.g., "3", "2", "15%"). Only translate if it's text.
-3. Translate the explanation completely into {target_lang} with proper spacing. Include all calculations and reasoning in {target_lang}.
+2. Translate the options completely into {target_lang} with proper spacing, keeping the format "1) option1 2) option2 ..."
+3. For answer: Keep numbers and option numbers unchanged (e.g., "3", "2", "15%"). Only translate if it's text.
+4. Translate the explanation completely into {target_lang} with proper spacing. Include all calculations and reasoning in {target_lang}.
 
 CRITICAL: You MUST return ONLY valid JSON (no markdown, no code blocks, no explanations, no additional text). The response must start with {{ and end with }}.
 
 Required JSON format (copy this structure exactly):
 {{
   "question_text_{lang_lower}": "fully translated question in {target_lang} with proper spacing",
+  "options_{lang_lower}": "fully translated options in {target_lang} in format '1) option1 2) option2 3) option3 4) option4 5) option5'",
   "answer_{lang_lower}": "{a}",
   "explanation_{lang_lower}": "fully translated explanation in {target_lang} with proper spacing, including all calculations"
 }}
 
 DO NOT include any text before or after the JSON object. Start with {{ and end with }}.
 
-Original Question: {q}
+Original Question: {q}{options_section}
 Original Answer: {a}
 Original Explanation: {e}
 
@@ -832,16 +894,20 @@ Return ONLY the JSON object:"""
                     # Try to extract translated fields using regex patterns
                     fallback_parsed = {}
                     q_key = f"question_text_{lang_lower}"
+                    o_key = f"options_{lang_lower}"
                     a_key = f"answer_{lang_lower}"
                     e_key = f"explanation_{lang_lower}"
                     
                     # Try to find fields in the response text
                     q_match = re.search(rf'"{q_key}"\s*:\s*"([^"]+)"', response_text, re.IGNORECASE)
+                    o_match = re.search(rf'"{o_key}"\s*:\s*"([^"]+)"', response_text, re.IGNORECASE)
                     a_match = re.search(rf'"{a_key}"\s*:\s*"([^"]+)"', response_text, re.IGNORECASE)
                     e_match = re.search(rf'"{e_key}"\s*:\s*"([^"]+)"', response_text, re.IGNORECASE)
                     
                     if q_match:
                         fallback_parsed[q_key] = q_match.group(1)
+                    if o_match:
+                        fallback_parsed[o_key] = o_match.group(1)
                     if a_match:
                         fallback_parsed[a_key] = a_match.group(1)
                     if e_match:
@@ -1028,6 +1094,7 @@ def build_html(pages, lang):
     for i, item in enumerate(pages, start=1):
         q_no = clean(item.get("question_number", str(i)))
         q_text = clean(item.get(f"question_text{suffix}", "")) or clean(item.get("question_text", ""))
+        opts = clean(item.get(f"options{suffix}", "")) or clean(item.get("options", ""))
         ans = clean(item.get(f"answer{suffix}", "")) or clean(item.get("answer", ""))
         exp = clean(item.get(f"explanation{suffix}", "")) or clean(item.get("explanation", ""))
 
@@ -1038,6 +1105,8 @@ def build_html(pages, lang):
         parts.append(f"<h2>Q{q_no}.</h2>")
         if q_text:
             parts.append(f"<p>{q_text}</p>")
+        if opts:
+            parts.append(f"<p><b>Options:</b> {opts}</p>")
         if ans:
             parts.append(f"<p><b>{ans_label}:</b> {ans}</p>")
         if exp:
@@ -1145,6 +1214,7 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
     for i, item in enumerate(data, start=1):
         q_no = clean(item.get("question_number", str(i)))
         q_text = clean(item.get(f"question_text{suffix}", "")) or clean(item.get("question_text", ""))
+        opts = clean(item.get(f"options{suffix}", "")) or clean(item.get("options", ""))
         ans = clean(item.get(f"answer{suffix}", "")) or clean(item.get("answer", ""))
         exp = clean(item.get(f"explanation{suffix}", "")) or clean(item.get("explanation", ""))
         
@@ -1171,6 +1241,22 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
                 try:
                     c.setFont("Helvetica", 12)
                     c.drawString(70, y, q_text if lang == "english" else "[Font error]")
+                    y -= 15
+                except:
+                    pass
+        
+        # Options (Use Telugu font with wrapping)
+        if opts:
+            y -= 10
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(70, y, "Options:")
+            y -= 15
+            try:
+                y = draw_wrapped_text(c, opts, 70, y, available_width, font_name, 11)
+            except Exception as font_error:
+                try:
+                    c.setFont("Helvetica", 11)
+                    c.drawString(70, y, opts if lang == "english" else "[Font error]")
                     y -= 15
                 except:
                     y -= 15
