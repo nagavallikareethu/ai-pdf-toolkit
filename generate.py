@@ -46,28 +46,31 @@ def generate_mcqs(pdf_path, n, language):
     prompt = f"""You are an expert exam question generator. Read the following document carefully and generate exactly {n} NEW MCQs.
 
 CRITICAL FORMATTING RULES:
-1. Write EVERYTHING in {language} language only - NO English translations or mixed language
-2. Each question MUST have exactly 4 options: A, B, C, D
-3. Format each question EXACTLY like this example:
+1. Write questions and options in {language} language
+2. Use ONLY English labels: "Answer:" (NOT "उत्तर:" or "సమాధానం" or any other language label)
+3. Each question MUST have exactly 4 options: A, B, C, D (use English letters A, B, C, D)
+4. Format each question EXACTLY like this example:
 
-1. [Question text here]
-A) [Option A text]
-B) [Option B text]  
-C) [Option C text]
-D) [Option D text]
+1. [Question text in {language}]
+A) [Option A text in {language}]
+B) [Option B text in {language}]  
+C) [Option C text in {language}]
+D) [Option D text in {language}]
 Answer: B
 
-2. [Next question text here]
-A) [Option A text]
-B) [Option B text]
-C) [Option C text]
-D) [Option D text]
+2. [Next question text in {language}]
+A) [Option A text in {language}]
+B) [Option B text in {language}]
+C) [Option C text in {language}]
+D) [Option D text in {language}]
 Answer: C
 
 [Continue for all {n} questions...]
 
 IMPORTANT:
 - Start each question with a number followed by a period (1., 2., 3., etc.)
+- Use English letters A, B, C, D for options (NOT 1, 2, 3, 4)
+- ALWAYS use "Answer: X" format where X is A, B, C, or D (NOT any other format)
 - Use proper spacing between questions and options
 - For Indic languages like Telugu, Hindi, Odia: ensure proper spacing between words
 - Write only one question per line
@@ -78,7 +81,7 @@ IMPORTANT:
 Document content:
 {pdf_text[:10000]}
 
-Now generate {n} MCQs following the format above EXACTLY:"""
+Now generate {n} MCQs following the format above EXACTLY. Remember: Use "Answer: X" format with English label!"""
 
     model = genai.GenerativeModel("gemini-2.5-pro")
     response = model.generate_content(prompt)
@@ -127,13 +130,23 @@ def parse_mcq_text(text):
                 'answer': None
             }
         elif current_q:
-            # Check if this is an answer
-            if line.startswith('Answer:') or re.match(r'^Answer\s*[:=]\s*([A-Z0-9]+)', line, re.IGNORECASE):
-                answer_match = re.search(r'Answer\s*[:=]\s*([A-Z0-9]+)', line, re.IGNORECASE)
+            # Check if this is an answer - handle multiple formats
+            # English: "Answer:", "Answer: B", "Answer:B"
+            # Hindi: "उत्तर:", "उत्तर: B"
+            # Telugu: "సమాధానం:", etc.
+            if (line.startswith('Answer:') or 
+                re.match(r'^(Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', line, re.IGNORECASE)):
+                # Try to extract answer value (A, B, C, D or 1, 2, 3, 4)
+                answer_match = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತर)\s*[:=]\s*([A-Z0-9]+)', line, re.IGNORECASE)
                 if answer_match:
                     current_q['answer'] = f"Answer: {answer_match.group(1)}"
                 else:
-                    current_q['answer'] = line
+                    # Fallback: try to find any letter/number after colon/equals
+                    fallback_match = re.search(r'[:=]\s*([A-Z0-9]+)', line)
+                    if fallback_match:
+                        current_q['answer'] = f"Answer: {fallback_match.group(1)}"
+                    else:
+                        current_q['answer'] = line
                 # End this question
                 if current_q['parts']:
                     current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
@@ -256,15 +269,40 @@ async def save_pdf_playwright(text, outpath, lang):
                         options_html += f'<span style="margin-right: 15px;">{opt}</span><br>'
                     options_html += '</div>'
                     q_html += options_html
-                # Answer
+                # Answer - handle multiple formats
                 if q.get("answer"):
-                    # Extract just the answer letter/number
+                    # Extract answer value - try multiple patterns
+                    answer_val = None
+                    # Try English format: "Answer: B"
                     answer_match = re.search(r'Answer\s*[:=]\s*([A-Z0-9]+)', q["answer"], re.IGNORECASE)
                     if answer_match:
                         answer_val = answer_match.group(1)
+                    else:
+                        # Try Hindi format: "उत्तर: B"
+                        answer_match = re.search(r'(?:उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', q["answer"], re.IGNORECASE)
+                        if answer_match:
+                            answer_val = answer_match.group(1)
+                        else:
+                            # Fallback: find any letter/number after colon/equals
+                            fallback_match = re.search(r'[:=]\s*([A-Z0-9]+)', q["answer"])
+                            if fallback_match:
+                                answer_val = fallback_match.group(1)
+                    
+                    if answer_val:
                         q_html += f'<div class="answer">Answer: {answer_val}</div>'
                     else:
-                        q_html += f'<div class="answer">{q["answer"]}</div>'
+                        # Display as-is if we can't extract
+                        q_html += f'<div class="answer">{clean_text_html(q["answer"])}</div>'
+                else:
+                    # No answer found - might be missing, check if it's in content
+                    content_text = q.get("content", "")
+                    # Try to find answer in content
+                    answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', content_text, re.IGNORECASE)
+                    if answer_in_content:
+                        q_html += f'<div class="answer">Answer: {answer_in_content.group(1)}</div>'
+                    else:
+                        # Answer not found at all
+                        q_html += f'<div class="answer" style="color: #999;">Answer: Not provided</div>'
                 q_html += '</div>'
                 content_parts.append(q_html)
             content_html = '\n'.join(content_parts)
