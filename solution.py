@@ -210,14 +210,25 @@ Return only 2-line explanation text.
                 continue
         
         # If we have questions, detect the actual question range
-        # If most questions are 31+, then filter out Q1, Q2, Q3, etc. (likely headers/metadata)
+        # If we have questions in the 31-100 range, filter out Q1-Q30 (likely headers/metadata)
         if len(valid_questions) > 3:
             q_nums = [int(m.group(1)) for m in valid_questions]
             min_q = min(q_nums)
             max_q = max(q_nums)
-            # If question range starts at 31+ and we have Q1-Q30, they're likely not real questions
-            if min_q >= 31 and min_q < max_q:
+            
+            # Check if we have questions in the 31+ range (actual exam questions)
+            questions_31_plus = [q for q in q_nums if 31 <= q <= 100]
+            questions_1_30 = [q for q in q_nums if 1 <= q <= 30]
+            
+            # If we have questions 31+ AND we also have Q1-Q30, filter out Q1-Q30
+            # This means the actual question range is 31+, and Q1-Q30 are likely headers/fragments
+            if len(questions_31_plus) >= 3 and len(questions_1_30) > 0:
+                print(f"Detected question range 31-{max_q}. Filtering out Q1-Q30 (likely headers/metadata).")
                 # Filter out questions < 31 (likely headers/metadata)
+                valid_questions = [m for m in valid_questions if int(m.group(1)) >= 31]
+            # Also filter if min is >= 31 (all questions are 31+)
+            elif min_q >= 31:
+                # Filter out any questions < 31 (shouldn't be any, but just in case)
                 valid_questions = [m for m in valid_questions if int(m.group(1)) >= 31]
         
         if len(valid_questions) > 1:
