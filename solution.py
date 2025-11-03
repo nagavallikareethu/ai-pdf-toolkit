@@ -193,17 +193,30 @@ Return only 2-line explanation text.
         # 2) Fallback to LLM for MCQs / textual questions
         # First, try to split text by question numbers BEFORE sending to Gemini
         # This helps ensure we extract questions individually
-        question_matches = list(re.finditer(r'\b(\d{2,})\.\s+', text))
+        # Match question numbers (typically 31-65, 2 digits, or single/double digit in some contexts)
+        question_matches = list(re.finditer(r'\b(\d{1,2})\.\s+(?!\d+\s+[A-Z])', text))
         
-        if len(question_matches) > 1:
-            # Found multiple questions - process each separately
+        # Filter out invalid question numbers (too large to be question numbers like 136800, etc.)
+        valid_questions = []
+        for match in question_matches:
+            q_num_str = match.group(1)
+            try:
+                q_num_int = int(q_num_str)
+                # Question numbers should typically be 1-100 range for exam questions
+                if 1 <= q_num_int <= 100:
+                    valid_questions.append(match)
+            except ValueError:
+                continue
+        
+        if len(valid_questions) > 1:
+            # Found multiple valid questions - process each separately
             page_questions = []
-            for i, match in enumerate(question_matches):
+            for i, match in enumerate(valid_questions):
                 q_num = match.group(1)
                 start_pos = match.start()
                 # Find end position (next question number or end of text)
-                if i + 1 < len(question_matches):
-                    end_pos = question_matches[i + 1].start()
+                if i + 1 < len(valid_questions):
+                    end_pos = valid_questions[i + 1].start()
                 else:
                     end_pos = len(text)
                 
@@ -231,29 +244,77 @@ Return only 2-line explanation text.
                 if question_start:
                     q_text = q_text[question_start.start():]
                 
-                # Extract only up to the question mark
+                # Extract complete question - should end with ? and have options or be complete
+                # First, try to find a complete question ending with ?
                 q_match = re.search(r'([^?]*\?)', q_text)
                 if q_match:
                     q_text = q_match.group(1).strip()
+                else:
+                    # If no ?, the question might be incomplete - skip it or try to complete it
+                    # Look for option markers (1), 2), 3), 4), 5)) or "Answer:" to mark end
+                    option_match = re.search(r'1\)\s+[^0-9]+2\)\s+[^0-9]+3\)\s+[^0-9]+4\)\s+[^0-9]+5\)', q_text)
+                    if option_match:
+                        # Question continues to options, extract everything up to options
+                        q_text = q_text[:option_match.start()].strip()
+                    else:
+                        # If question doesn't have ? and no options, it's likely incomplete
+                        # Skip questions that are too short or don't look complete
+                        if len(q_text) < 30 or not re.search(r'\?|Find|Calculate|What|How|Which|Total|Average', q_text, re.IGNORECASE):
+                            continue  # Skip incomplete questions
                 
-                if q_text and len(q_text) > 20:  # Only process if there's substantial text
-                    page_questions.append({"num": q_num, "text": q_text})
+                # Clean up: remove leading question number and any whitespace
+                q_text = re.sub(rf'^{re.escape(q_num)}\.\s*', '', q_text).strip()
+                
+                # Validate question completeness - look for actual question content
+                # Must have meaningful question text (not just numbers or metadata)
+                has_question_words = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|ratio|percent|number|students|amount|value|time|days|speed|probability|gain|loss)', q_text, re.IGNORECASE)
+                
+                # Check if it's a number series or pattern question
+                is_pattern_question = re.search(r'^\d+\s+\d+\s+\d+\s+\?', q_text) or re.search(r'^\d+\s+\d+\s+\d+', q_text)
+                
+                # Check if question is complete (ends with ? or has options)
+                has_question_mark = '?' in q_text
+                has_options = re.search(r'1\)\s+|2\)\s+|3\)\s+|4\)\s+|5\)\s+', q_text)
+                
+                is_valid = (
+                    has_question_words or 
+                    is_pattern_question or
+                    (has_question_mark and len(q_text) > 30) or
+                    (has_options and len(q_text) > 40)
+                )
+                
+                # Skip if too short, has no question content, or looks like data/metadata
+                if not is_valid or len(q_text) < 20:
+                    continue
+                
+                # Skip if it looks like a data value or metadata (e.g., "136800", "Total no. of students are")
+                if re.search(r'^(Total\s+no\.|The\s+ratio|No\.\s+of)', q_text, re.IGNORECASE) and not has_question_mark:
+                    # Only include if it has a question mark
+                    if not has_question_mark:
+                        continue
+                
+                page_questions.append({"num": q_num, "text": q_text})
             
             # Process each question individually with Gemini
             for pq in page_questions:
-                prompt = f"""You are an expert exam solver. Extract and solve this question.
+                prompt = f"""You are an expert exam solver. Solve this question completely.
 
-Question: {pq['text']}
+Question {pq['num']}: {pq['text']}
 
-Return ONLY a JSON object (no array, no markdown):
+IMPORTANT:
+1. If the question appears incomplete or truncated, indicate that in the explanation
+2. Provide the answer based on the data available
+3. Provide a complete 2-3 line explanation of how to solve it
+
+Return ONLY a JSON object (no array, no markdown, no code blocks):
 {{
   "question_number": "{pq['num']}",
   "question_text": "{pq['text']}",
-  "answer": "option_number_here",
-  "explanation": "2-line explanation"
+  "answer": "option_number_1_to_5",
+  "explanation": "Complete 2-3 line explanation of the solution"
 }}
 
-Solve the question and return the JSON object:"""
+Return the JSON object now:"""
                 try:
                     response = model.generate_content(prompt)
                     raw_output = extract_json_block(response.text)
