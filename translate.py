@@ -1626,21 +1626,76 @@ class PDFGenerator:
         return s.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").strip()
 
     def detect_language(self, data):
-        """Auto-detect which language is used in the JSON"""
-        sample = json.dumps(data, ensure_ascii=False).lower()
-        if "telugu" in sample:
-            return "telugu"
-        elif "hindi" in sample:
-            return "hindi" 
-        elif "odia" in sample or "oriya" in sample:
+        """Auto-detect which language is used in the JSON by checking translated content"""
+        # Check translated_content in text blocks for actual Unicode characters
+        hindi_chars = 0
+        odia_chars = 0
+        telugu_chars = 0
+        tamil_chars = 0
+        
+        # Check first few pages
+        pages = data.get("pages", [])[:3]  # Check first 3 pages
+        for page in pages:
+            text_blocks = page.get("text_content", [])
+            for block in text_blocks:
+                # Check translated_content first, then original content
+                content = block.get("translated_content", "") or block.get("content", "")
+                if content:
+                    # Hindi Unicode range: 0x0900-0x097F (Devanagari)
+                    hindi_chars += len(re.findall(r'[\u0900-\u097F]', content))
+                    # Odia Unicode range: 0x0B00-0x0B7F
+                    odia_chars += len(re.findall(r'[\u0B00-\u0B7F]', content))
+                    # Telugu Unicode range: 0x0C00-0x0C7F
+                    telugu_chars += len(re.findall(r'[\u0C00-\u0C7F]', content))
+                    # Tamil Unicode range: 0x0B80-0x0BFF
+                    tamil_chars += len(re.findall(r'[\u0B80-\u0BFF]', content))
+        
+        # Return language with most characters found
+        if hindi_chars > odia_chars and hindi_chars > telugu_chars and hindi_chars > tamil_chars:
+            return "hindi"
+        elif odia_chars > telugu_chars and odia_chars > tamil_chars:
             return "odia"
-        else:
+        elif tamil_chars > telugu_chars:
+            return "tamil"
+        elif telugu_chars > 0:
             return "telugu"
+        else:
+            # Fallback: check metadata or sample text
+            sample = json.dumps(data, ensure_ascii=False).lower()
+            if "hindi" in sample or "हिंदी" in sample:
+                return "hindi"
+            elif "odia" in sample or "oriya" in sample or "ଓଡ଼ିଆ" in sample:
+                return "odia"
+            elif "tamil" in sample or "தமிழ்" in sample:
+                return "tamil"
+            elif "telugu" in sample or "తెలుగు" in sample:
+                return "telugu"
+            else:
+                return "telugu"  # Default fallback
 
     def build_page_html(self, page_data, lang):
         """Build HTML for a single page using reference code approach"""
-        font_file = FONTS.get(lang, FONTS["telugu"])
+        # Normalize language to lowercase to match FONTS dictionary keys
+        lang = lang.lower() if lang else "telugu"
+        
+        # Map language names to FONTS keys
+        lang_map = {
+            "hi": "hindi", "hindi": "hindi",
+            "or": "odia", "odia": "odia", "oriya": "odia",
+            "te": "telugu", "telugu": "telugu",
+            "ta": "tamil", "tamil": "tamil",
+            "en": "telugu", "english": "telugu"  # Default to telugu font for English
+        }
+        lang_key = lang_map.get(lang, lang)  # Use mapping if available, otherwise use lang as-is
+        
+        font_file = FONTS.get(lang_key, FONTS["telugu"])
+        if not os.path.exists(font_file):
+            print(f"Warning: Font not found for {lang_key}: {font_file}, using Telugu font")
+            font_file = FONTS["telugu"]
+        
         font_path = pathlib.Path(font_file).resolve().as_uri() if os.path.exists(font_file) else ""
+        if font_path:
+            print(f"Using font for {lang_key}: {font_file}")
 
         css = f"""
         @font-face {{
