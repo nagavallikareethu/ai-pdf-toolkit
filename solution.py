@@ -275,7 +275,7 @@ def translate_items(items, target_lang):
 
 IMPORTANT: For Indic languages ({target_lang}), ensure proper spacing between words.
 
-CRITICAL: You must return ONLY valid JSON (no markdown, no code blocks, no explanations). The response must start with {{ and end with }}.
+CRITICAL: You MUST return ONLY valid JSON (no markdown, no code blocks, no explanations, no additional text). The response must start with {{ and end with }}.
 
 Required JSON format (copy this structure exactly):
 {{
@@ -284,11 +284,13 @@ Required JSON format (copy this structure exactly):
   "explanation_{lang_lower}": "translated explanation with proper spacing"
 }}
 
+DO NOT include any text before or after the JSON object. Start with {{ and end with }}.
+
 Original Question: {q}
 Original Answer: {a}
 Original Explanation: {e}
 
-Return the translation as JSON only:"""
+Return ONLY the JSON object:"""
         
         # Retry logic for rate limits
         max_retries = 3
@@ -336,12 +338,19 @@ Return the translation as JSON only:"""
                         print(f"Successfully extracted translation fields using fallback method.")
                         break
                     else:
-                        # Store raw response for debugging
-                        merged = {**item, f"raw_translation_{lang_lower}": response_text}
-                        translated.append(merged)
-                        print(f"Error: Could not extract translation for question {item.get('question_number', '?')}. Raw response stored.")
-                        success = True  # Mark as processed to avoid retry
-                        break
+                        # Translation failed - don't mark as success, retry if attempts remaining
+                        if attempt < max_retries - 1:
+                            print(f"Warning: Translation extraction failed for question {item.get('question_number', '?')}. Retrying... (Attempt {attempt + 1}/{max_retries})")
+                            time.sleep(retry_delay)
+                            retry_delay *= 2
+                            continue
+                        else:
+                            # Final attempt failed - store with error but still add to list
+                            print(f"Error: Could not extract translation for question {item.get('question_number', '?')} after {max_retries} attempts. Using original text.")
+                            merged = {**item, f"translation_error_{lang_lower}": "Failed to extract translation", f"raw_translation_{lang_lower}": response_text}
+                            translated.append(merged)
+                            success = True  # Mark as processed to continue
+                            break
                         
             except Exception as err:
                 error_str = str(err)
@@ -358,11 +367,19 @@ Return the translation as JSON only:"""
                         print(f"Error: Translation failed for question {item.get('question_number', '?')} after {max_retries} retries due to rate limit.")
                         break
                 else:
-                    # Not a rate limit error, don't retry
-                    item[f"translation_error_{lang_lower}"] = str(err)
-                    translated.append(item)
-                    print(f"Error: Translation failed for question {item.get('question_number', '?')}: {err}")
-                    break
+                    # Not a rate limit error - retry once more, then give up
+                    if attempt < max_retries - 1:
+                        print(f"Warning: Translation error for question {item.get('question_number', '?')}: {err}. Retrying... (Attempt {attempt + 1}/{max_retries})")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    else:
+                        # Final attempt failed - store with error but still add to list
+                        item[f"translation_error_{lang_lower}"] = str(err)
+                        translated.append(item)
+                        print(f"Error: Translation failed for question {item.get('question_number', '?')} after {max_retries} attempts: {err}")
+                        success = True  # Mark as processed to continue with next item
+                        break
         
         if not success and f"translation_error_{lang_lower}" not in item:
             item[f"translation_error_{lang_lower}"] = "Translation failed after retries"
