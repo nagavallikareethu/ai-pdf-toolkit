@@ -457,17 +457,37 @@ Return the JSON object now:"""
                 try:
                     response = model.generate_content(prompt)
                     raw_output = extract_json_block(response.text)
+                    
+                    # Try to parse JSON
+                    parsed = None
                     try:
                         parsed = json.loads(raw_output)
-                        if isinstance(parsed, dict):
-                            results.append(parsed)
-                    except Exception:
-                        # If JSON parsing fails, create a structured question from cleaned text
+                    except json.JSONDecodeError:
+                        # Try to extract JSON from raw response using extract_inner_json
+                        parsed = extract_inner_json(response.text)
+                    
+                    if parsed and isinstance(parsed, dict):
+                        # Ensure all required fields are present
+                        result = {
+                            "question_number": parsed.get("question_number", pq['num']),
+                            "question_text": parsed.get("question_text", pq['text']),
+                            "answer": parsed.get("answer", ""),
+                            "explanation": parsed.get("explanation", "")
+                        }
+                        results.append(result)
+                    else:
+                        # If JSON parsing completely fails, try to extract answer/explanation from raw text
+                        answer_match = re.search(r'"answer"\s*:\s*"([^"]+)"', response.text, re.IGNORECASE)
+                        explanation_match = re.search(r'"explanation"\s*:\s*"([^"]+)"', response.text, re.IGNORECASE)
+                        
+                        answer = answer_match.group(1) if answer_match else ""
+                        explanation = explanation_match.group(1) if explanation_match else ""
+                        
                         results.append({
                             "question_number": pq['num'],
                             "question_text": pq['text'],
-                            "answer": "",
-                            "explanation": ""
+                            "answer": answer,
+                            "explanation": explanation
                         })
                 except Exception as e:
                     results.append({
