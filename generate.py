@@ -104,6 +104,11 @@ def clean_text_html(s):
 
 def parse_mcq_text(text):
     """Parse MCQ text into structured format - improved version"""
+    # Debug: print raw text to see what Gemini is generating
+    print(f"\n=== DEBUG: Raw text from Gemini (first 1000 chars) ===")
+    print(text[:1000])
+    print("=== END DEBUG ===\n")
+    
     # Try to add line breaks where questions start
     text = re.sub(r'(\d+)\.', r'\n\1.', text)
     
@@ -153,34 +158,62 @@ def parse_mcq_text(text):
                 questions.append(current_q)
                 current_q = None
             # Check if this is an option (A), B), C), D) or 1), 2), 3), 4), 5))
-            elif re.match(r'^[A-E]\)|^[1-5]\)', line, re.IGNORECASE):
+            # More flexible: allow spaces after marker, handle various formats
+            elif re.match(r'^[A-E]\)\s*|^[1-5]\)\s*', line, re.IGNORECASE):
                 # This is an option line
                 if not current_q.get('options'):
                     current_q['options'] = []
                 current_q['options'].append(line)
+            # Check if line contains option markers anywhere (for mixed content)
+            elif re.search(r'\b[A-E]\)\s+|\b[1-5]\)\s+', line, re.IGNORECASE):
+                # Line contains option markers - extract them
+                # Try to split by option markers
+                option_parts = re.split(r'(\b[A-E]\)|\b[1-5]\))', line)
+                for i in range(1, len(option_parts), 2):
+                    if i < len(option_parts):
+                        opt_marker = option_parts[i].strip()
+                        opt_text = option_parts[i+1].strip() if i+1 < len(option_parts) else ""
+                        if opt_marker and opt_text:
+                            if not current_q.get('options'):
+                                current_q['options'] = []
+                            current_q['options'].append(f"{opt_marker} {opt_text}")
+                # Also add to parts if there's other content
+                if not re.match(r'^[A-E]\)|^[1-5]\)', line, re.IGNORECASE):
+                    current_q['parts'].append(line)
             else:
                 # Add to current question parts (question text or continuation)
                 if line:
-                    # If we already have options, this might be more options on the same line
-                    if current_q.get('options') and re.search(r'[A-E]\)|[1-5]\)', line, re.IGNORECASE):
-                        # Split line by option markers
-                        option_parts = re.split(r'([A-E]\)|[1-5]\))', line)
-                        for i in range(1, len(option_parts), 2):
-                            if i < len(option_parts):
-                                opt_marker = option_parts[i]
-                                opt_text = option_parts[i+1].strip() if i+1 < len(option_parts) else ""
-                                if opt_marker and opt_text:
-                                    if not current_q.get('options'):
-                                        current_q['options'] = []
-                                    current_q['options'].append(f"{opt_marker} {opt_text}")
-                    else:
-                        current_q['parts'].append(line)
+                    current_q['parts'].append(line)
     
     if current_q:
         if current_q['parts']:
             current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
-        # Don't add options to content - they'll be displayed separately
+        # Try to extract options from content if not found separately
+        if not current_q.get('options') or len(current_q['options']) == 0:
+            content_text = current_q.get('content', '')
+            # Look for options in content
+            options_in_content = re.findall(r'(\b[A-E]\)|\b[1-5]\))\s*([^\n<]+)', content_text, re.IGNORECASE)
+            if options_in_content and len(options_in_content) >= 2:
+                current_q['options'] = [f"{marker.strip()} {text.strip()}" for marker, text in options_in_content[:5]]
+        # Try to extract answer from content if not found separately
+        if not current_q.get('answer'):
+            content_text = current_q.get('content', '')
+            # Look for answer in content
+            answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', content_text, re.IGNORECASE)
+            if answer_in_content:
+                current_q['answer'] = f"Answer: {answer_in_content.group(1)}"
         questions.append(current_q)
+    
+    # Debug: print what was parsed
+    if questions:
+        print(f"\n=== DEBUG: Parsed {len(questions)} questions ===")
+        for i, q in enumerate(questions[:2], 1):  # Print first 2 questions for debugging
+            print(f"Q{q['number']}: Content length={len(q.get('content', ''))}, Options={len(q.get('options', []))}, Answer={q.get('answer', 'None')}")
+            if q.get('options'):
+                print(f"  Options: {q['options']}")
+            if q.get('answer'):
+                print(f"  Answer: {q['answer']}")
+        print("=== END DEBUG ===\n")
     
     return questions if questions else None
 
