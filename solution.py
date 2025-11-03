@@ -894,9 +894,10 @@ Return ONLY the JSON object:"""
                         break
         
         if not success and f"translation_error_{lang_lower}" not in item:
-            item[f"translation_error_{lang_lower}"] = "Translation failed after retries"
-            translated.append(item)
-            print(f"Error: Translation failed for question {item.get('question_number', '?')} after all retries.")
+            # If translation completely failed, use original English text (don't add error fields)
+            merged = {**item}
+            translated.append(merged)
+            print(f"Translation skipped for question {item.get('question_number', '?')} after all retries. Using original text.")
 
     # Sort translated results by question_number to maintain sequence
     def get_qnum_translated(q):
