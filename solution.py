@@ -191,25 +191,94 @@ Return only 2-line explanation text.
             continue
 
         # 2) Fallback to LLM for MCQs / textual questions
-        # First, try to split text by question numbers to help extraction
-        # Find all question numbers in the text (e.g., "31.", "32.", "33.")
-        question_pattern = r'\b(\d{2,})\.\s+(?![A-Z]{2,}\s)'  # Match 2+ digit numbers followed by period and space, but not all caps words
+        # First, try to split text by question numbers BEFORE sending to Gemini
+        # This helps ensure we extract questions individually
+        question_matches = list(re.finditer(r'\b(\d{2,})\.\s+', text))
         
-        # Try to extract questions more intelligently before sending to Gemini
-        # Split text by question markers
-        question_splits = re.split(r'\b(\d{2,})\.\s+', text)
-        
-        # If we found question splits, process each question separately for better extraction
-        if len(question_splits) > 1:
-            # Reconstruct questions with their numbers
+        if len(question_matches) > 1:
+            # Found multiple questions - process each separately
             page_questions = []
-            for i in range(1, len(question_splits), 2):
-                if i+1 < len(question_splits):
-                    q_num = question_splits[i]
-                    q_text = question_splits[i+1].strip()
-                    if q_text and len(q_text) > 20:  # Only process if there's substantial text
-                        page_questions.append({"num": q_num, "text": q_text})
+            for i, match in enumerate(question_matches):
+                q_num = match.group(1)
+                start_pos = match.start()
+                # Find end position (next question number or end of text)
+                if i + 1 < len(question_matches):
+                    end_pos = question_matches[i + 1].start()
+                else:
+                    end_pos = len(text)
+                
+                q_text = text[start_pos:end_pos].strip()
+                # Clean the question text immediately to remove unwanted content
+                q_text = re.sub(r'^\d+\.\s*\d+\s+[A-Z][^?]*?Sreedhar\'s\s+CCE[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'Sreedhar\'s\s+CCE[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'SBI\s+CLERK[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'LIC\s+Asst\.[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'PRELIMS\s+MT[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'NIACL\s+Asst\.[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'TIER-I[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'NUMERICAL\s+ABILITY[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'Directions\s*\([^)]+\)[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'Study\s+the\s+data\s+carefully[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'answer\s+the\s+following\s+questions[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'The\s+Bar-chart\s+shows[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'\d+\s+\d{4}\s+\d{4}[^?]*?', '', q_text)  # Remove chart axis
+                q_text = re.sub(r'Years\s+in\s+Lakhs[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'MTS\s+CGL\s+CHSL[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'MODEL\s+TEST[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                
+                # Find the actual question (starts with a meaningful word)
+                question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|?\s*\d+\.\s+[A-Z])', q_text, re.IGNORECASE)
+                if question_start:
+                    q_text = q_text[question_start.start():]
+                
+                # Extract only up to the question mark
+                q_match = re.search(r'([^?]*\?)', q_text)
+                if q_match:
+                    q_text = q_match.group(1).strip()
+                
+                if q_text and len(q_text) > 20:  # Only process if there's substantial text
+                    page_questions.append({"num": q_num, "text": q_text})
+            
+            # Process each question individually with Gemini
+            for pq in page_questions:
+                prompt = f"""You are an expert exam solver. Extract and solve this question.
+
+Question: {pq['text']}
+
+Return ONLY a JSON object (no array, no markdown):
+{{
+  "question_number": "{pq['num']}",
+  "question_text": "{pq['text']}",
+  "answer": "option_number_here",
+  "explanation": "2-line explanation"
+}}
+
+Solve the question and return the JSON object:"""
+                try:
+                    response = model.generate_content(prompt)
+                    raw_output = extract_json_block(response.text)
+                    try:
+                        parsed = json.loads(raw_output)
+                        if isinstance(parsed, dict):
+                            results.append(parsed)
+                    except Exception:
+                        # If JSON parsing fails, create a structured question from cleaned text
+                        results.append({
+                            "question_number": pq['num'],
+                            "question_text": pq['text'],
+                            "answer": "",
+                            "explanation": ""
+                        })
+                except Exception as e:
+                    results.append({
+                        "question_number": pq['num'],
+                        "question_text": pq['text'],
+                        "error": str(e),
+                        "method": "gemini_fallback"
+                    })
+            continue  # Skip the main prompt processing below
         
+        # If no question splits found, use the original approach but with enhanced cleaning
         prompt = f"""You are an expert exam solver. Extract and solve ONLY the actual questions from the text below.
 
 CRITICAL INSTRUCTIONS - READ CAREFULLY:
