@@ -100,7 +100,7 @@ def clean_text_html(s):
     return s.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").strip()
 
 def parse_mcq_text(text):
-    """Parse MCQ text into structured format - simple version"""
+    """Parse MCQ text into structured format - improved version"""
     # Try to add line breaks where questions start
     text = re.sub(r'(\d+)\.', r'\n\1.', text)
     
@@ -122,25 +122,53 @@ def parse_mcq_text(text):
             current_q = {
                 'number': match.group(1),
                 'content': match.group(2),
-                'parts': []
+                'parts': [],
+                'options': [],
+                'answer': None
             }
         elif current_q:
             # Check if this is an answer
-            if line.startswith('Answer:'):
-                current_q['answer'] = line
+            if line.startswith('Answer:') or re.match(r'^Answer\s*[:=]\s*([A-Z0-9]+)', line, re.IGNORECASE):
+                answer_match = re.search(r'Answer\s*[:=]\s*([A-Z0-9]+)', line, re.IGNORECASE)
+                if answer_match:
+                    current_q['answer'] = f"Answer: {answer_match.group(1)}"
+                else:
+                    current_q['answer'] = line
                 # End this question
                 if current_q['parts']:
                     current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
                 questions.append(current_q)
                 current_q = None
+            # Check if this is an option (A), B), C), D) or 1), 2), 3), 4), 5))
+            elif re.match(r'^[A-E]\)|^[1-5]\)', line, re.IGNORECASE):
+                # This is an option line
+                if not current_q.get('options'):
+                    current_q['options'] = []
+                current_q['options'].append(line)
             else:
-                # Add to current question parts
+                # Add to current question parts (question text or continuation)
                 if line:
-                    current_q['parts'].append(line)
+                    # If we already have options, this might be more options on the same line
+                    if current_q.get('options') and re.search(r'[A-E]\)|[1-5]\)', line, re.IGNORECASE):
+                        # Split line by option markers
+                        option_parts = re.split(r'([A-E]\)|[1-5]\))', line)
+                        for i in range(1, len(option_parts), 2):
+                            if i < len(option_parts):
+                                opt_marker = option_parts[i]
+                                opt_text = option_parts[i+1].strip() if i+1 < len(option_parts) else ""
+                                if opt_marker and opt_text:
+                                    if not current_q.get('options'):
+                                        current_q['options'] = []
+                                    current_q['options'].append(f"{opt_marker} {opt_text}")
+                    else:
+                        current_q['parts'].append(line)
     
     if current_q:
         if current_q['parts']:
             current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
+        if current_q.get('options'):
+            # Add options to content
+            current_q['content'] += '<br><br>' + '<br>'.join(current_q['options'])
         questions.append(current_q)
     
     return questions if questions else None
@@ -205,12 +233,45 @@ async def save_pdf_playwright(text, outpath, lang):
         }}
         """
         
-        # Use plain text formatting - better for alignment
+        # Parse MCQ text into structured format
         clean_text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
         clean_text = clean_text.replace("—", "-").replace("–", "-")
-        # Force line breaks  
-        clean_text_html_output = clean_text_html(clean_text).replace('\n', '<br>')
-        content_html = f'<div style="white-space: pre-wrap;">{clean_text_html_output}</div>'
+        
+        # Parse MCQs properly
+        questions = parse_mcq_text(clean_text)
+        
+        if questions:
+            # Build structured HTML for each question
+            content_parts = []
+            for q in questions:
+                q_html = f'<div class="question">'
+                # Question number
+                q_html += f'<div class="question-number">Q{q["number"]}.</div>'
+                # Question content
+                q_html += f'<div class="question-content">{q["content"]}</div>'
+                # Options (if separate from content)
+                if q.get("options") and len(q["options"]) > 0:
+                    options_html = '<div style="margin: 8px 0;"><strong>Options:</strong><br>'
+                    for opt in q["options"]:
+                        options_html += f'<span style="margin-right: 15px;">{opt}</span><br>'
+                    options_html += '</div>'
+                    q_html += options_html
+                # Answer
+                if q.get("answer"):
+                    # Extract just the answer letter/number
+                    answer_match = re.search(r'Answer\s*[:=]\s*([A-Z0-9]+)', q["answer"], re.IGNORECASE)
+                    if answer_match:
+                        answer_val = answer_match.group(1)
+                        q_html += f'<div class="answer">Answer: {answer_val}</div>'
+                    else:
+                        q_html += f'<div class="answer">{q["answer"]}</div>'
+                q_html += '</div>'
+                content_parts.append(q_html)
+            content_html = '\n'.join(content_parts)
+        else:
+            # Fallback to plain text if parsing fails
+            clean_text_html_output = clean_text_html(clean_text).replace('\n', '<br>')
+            content_html = f'<div style="white-space: pre-wrap;">{clean_text_html_output}</div>'
         
         html_content = f"""
         <!doctype html>

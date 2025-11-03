@@ -444,39 +444,69 @@ Return only 2-line explanation text.
                     continue  # Skip fragments that don't start properly
                 
                 # Extract options from original text after question
-                # Look for options in the format: "1) option1 2) option2 3) option3 4) option4 5) option5"
+                # Handle multiple formats:
+                # 1. "1) option1 2) option2 3) option3 4) option4 5) option5" (all on one line)
+                # 2. ")20%", ") 25%", ") 15%", ") 18%" (just closing parens, separate lines)
+                # 3. "1)", "2)", "3)", "4)", "5)" on separate lines
                 options_text = ""
                 # First, try to find options in the original text segment
                 full_text_segment = text[start_pos:end_pos]
-                # Look for options after the question text
-                # Options typically appear after the question mark or at the end
-                option_pattern = r'(?:^|\s)([1-5]\)\s+[^\d]+?)(?:\s+[1-5]\)\s+[^\d]+?){0,4}'
+                
+                # Try format 1: "1) option1 2) option2..." (all on one line)
                 option_match = re.search(r'1\)\s+([^0-9]+?)\s+2\)\s+([^0-9]+?)(?:\s+3\)\s+([^0-9]+?))?(?:\s+4\)\s+([^0-9]+?))?(?:\s+5\)\s+([^0-9]+?))?', full_text_segment, re.IGNORECASE)
                 
-                if not option_match:
-                    # Try alternative pattern: options on same line separated by spaces
-                    option_line = re.search(r'1\)\s+[^?]+?(?:2\)|3\)|4\)|5\))', full_text_segment, re.DOTALL)
-                    if option_line:
-                        # Extract the options line
-                        options_text = option_line.group(0).strip()
-                        # Clean up options text
-                        options_text = re.sub(r'^\d+\.\s*', '', options_text)  # Remove leading question number
-                        options_text = re.sub(r'Sreedhar\'s\s+CCE[^1-5]*', '', options_text, flags=re.IGNORECASE)
-                else:
+                if option_match:
                     # Build options string from matches
                     options_parts = []
                     for i in range(1, option_match.lastindex + 1):
                         if option_match.group(i):
-                            options_parts.append(option_match.group(i).strip())
+                            opt_text = option_match.group(i).strip()
+                            # Add option number if not present
+                            if not re.match(r'^\d+\)', opt_text):
+                                opt_text = f"{i}) {opt_text}"
+                            else:
+                                opt_text = f"{i}) {re.sub(r'^\d+\)\s*', '', opt_text)}"
+                            options_parts.append(opt_text)
                     if options_parts:
                         options_text = " ".join(options_parts)
+                else:
+                    # Try format 2: ")option" (just closing parens, separate lines)
+                    # Look for lines with pattern: ")text" or ") text"
+                    option_lines = re.findall(r'\)\s*([^\n\d\)]+)', full_text_segment, re.IGNORECASE)
+                    if len(option_lines) >= 2:
+                        # Found multiple option-like lines
+                        options_parts = []
+                        for idx, opt_line in enumerate(option_lines[:5], start=1):  # Limit to 5 options
+                            opt_clean = opt_line.strip()
+                            if opt_clean and len(opt_clean) > 0:
+                                options_parts.append(f"{idx}) {opt_clean}")
+                        if options_parts:
+                            options_text = " ".join(options_parts)
+                    else:
+                        # Try format 3: Separate lines with "1)", "2)", etc.
+                        option_pattern = re.findall(r'([1-5]\)\s*[^\n]+)', full_text_segment, re.IGNORECASE)
+                        if len(option_pattern) >= 2:
+                            # Found numbered options on separate lines
+                            options_text = " ".join([opt.strip() for opt in option_pattern[:5]])
                 
                 # Also try to find options in the next 500 chars after end_pos
                 if not options_text and end_pos < len(text):
                     next_text = text[end_pos:end_pos + 500]
+                    # Try format 1 again
                     option_line = re.search(r'1\)\s+[^?]+?(?:2\)|3\)|4\)|5\))', next_text, re.DOTALL)
                     if option_line:
                         options_text = option_line.group(0).strip()
+                    else:
+                        # Try format 2 in next text
+                        option_lines = re.findall(r'\)\s*([^\n\d\)]+)', next_text, re.IGNORECASE)
+                        if len(option_lines) >= 2:
+                            options_parts = []
+                            for idx, opt_line in enumerate(option_lines[:5], start=1):
+                                opt_clean = opt_line.strip()
+                                if opt_clean:
+                                    options_parts.append(f"{idx}) {opt_clean}")
+                            if options_parts:
+                                options_text = " ".join(options_parts)
                 
                 # Clean options text
                 if options_text:
@@ -484,6 +514,7 @@ Return only 2-line explanation text.
                     options_text = re.sub(r'Sreedhar\'s\s+CCE[^1-5]*', '', options_text, flags=re.IGNORECASE)
                     options_text = re.sub(r'SBI\s+CLERK[^1-5]*', '', options_text, flags=re.IGNORECASE)
                     options_text = re.sub(r'MODEL\s+TEST[^1-5]*', '', options_text, flags=re.IGNORECASE)
+                    options_text = re.sub(r'^\d+\.\s*', '', options_text)  # Remove leading question number
                     options_text = options_text.strip()
                 
                 page_questions.append({"num": q_num, "text": q_text, "options": options_text})
