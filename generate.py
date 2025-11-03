@@ -177,15 +177,22 @@ def parse_mcq_text(text):
                     current_q['options'] = []
                 current_q['options'].append(line)
             # Handle lines that start with just ")" - assign sequential letters A, B, C, D
-            elif re.match(r'^\)\s+', line):
-                # Line starts with just ")" - assign option letter based on count
+            # Match ") " with space OR ")180" without space
+            elif re.match(r'^\)\s*[^\s]', line):
+                # Line starts with just ")" followed by non-whitespace - assign option letter based on count
                 opt_count = len(current_q.get('options', []))
                 if opt_count < 4:
                     option_letter = ['A', 'B', 'C', 'D'][opt_count]
-                    option_text = line[1:].strip()  # Remove ")" and get text
-                    if not current_q.get('options'):
-                        current_q['options'] = []
-                    current_q['options'].append(f"{option_letter}) {option_text}")
+                    # Remove ")" and any whitespace, get remaining text
+                    option_text = re.sub(r'^\)\s*', '', line).strip()
+                    if option_text and len(option_text) > 0:  # Only add if there's actual text
+                        if not current_q.get('options'):
+                            current_q['options'] = []
+                        current_q['options'].append(f"{option_letter}) {option_text}")
+                        print(f"DEBUG: Assigned letter {option_letter} to option line: '{line[:50]}' -> '{option_letter}) {option_text[:50]}'")
+                else:
+                    # Already have 4 options, might be content - add to parts
+                    current_q['parts'].append(line)
             # Check if line contains option markers anywhere (for mixed content)
             elif re.search(r'\b[A-E]\)\s+|\b[1-5]\)\s+', line, re.IGNORECASE):
                 # Line contains option markers - extract them
@@ -219,12 +226,16 @@ def parse_mcq_text(text):
                 current_q['options'] = [f"{marker.strip()} {text.strip()}" for marker, text in options_in_content[:5]]
             else:
                 # Fallback: look for lines that start with just ")" - assign letters
-                just_paren_options = re.findall(r'\)\s+([^\n<]+)', content_text)
+                # Remove HTML tags first to get plain text
+                plain_text = re.sub(r'<[^>]+>', ' ', content_text)
+                # Find all lines that start with just ")" followed by text
+                just_paren_options = re.findall(r'\)\s+([^)\n]+)', plain_text)
                 if just_paren_options and len(just_paren_options) >= 2:
                     # Assign sequential letters A, B, C, D
                     option_letters = ['A', 'B', 'C', 'D']
                     current_q['options'] = [f"{option_letters[i]}) {text.strip()}" 
                                           for i, text in enumerate(just_paren_options[:4])]
+                    print(f"DEBUG: Extracted {len(current_q['options'])} options from content fallback: {current_q['options']}")
         # Try to extract answer from content if not found separately
         if not current_q.get('answer'):
             content_text = current_q.get('content', '')
