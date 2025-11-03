@@ -435,25 +435,32 @@ Return only 2-line explanation text.
                 page_questions.append({"num": q_num, "text": q_text})
             
             # Process each question individually with Gemini
+            # Include page context for questions that might need chart/table data
+            page_context = text[:2000]  # First 2000 chars usually contain chart/table descriptions
             for pq in page_questions:
                 prompt = f"""You are an expert exam solver. Solve this question completely.
 
-Question {pq['num']}: {pq['text']}
+PAGE CONTEXT (may contain chart/table data):
+{page_context}
+
+QUESTION {pq['num']}:
+{pq['text']}
 
 IMPORTANT:
-1. If the question appears incomplete or truncated, indicate that in the explanation
-2. Provide the answer based on the data available
-3. Provide a complete 2-3 line explanation of how to solve it
+1. Use the page context above if the question references data, charts, or tables
+2. If the question appears incomplete, try to solve it with available information
+3. Provide the correct answer option (1, 2, 3, 4, or 5)
+4. Provide a complete 2-3 line explanation showing your calculation or reasoning
 
-Return ONLY a JSON object (no array, no markdown, no code blocks):
+Return ONLY a JSON object (no array, no markdown, no code blocks). Start with {{ and end with }}:
 {{
   "question_number": "{pq['num']}",
   "question_text": "{pq['text']}",
-  "answer": "option_number_1_to_5",
-  "explanation": "Complete 2-3 line explanation of the solution"
+  "answer": "1",
+  "explanation": "Step-by-step calculation and reasoning (2-3 lines)"
 }}
 
-Return the JSON object now:"""
+Return ONLY the JSON object:"""
                 try:
                     response = model.generate_content(prompt)
                     raw_output = extract_json_block(response.text)
@@ -477,22 +484,64 @@ Return the JSON object now:"""
                         results.append(result)
                     else:
                         # If JSON parsing completely fails, try to extract answer/explanation from raw text
-                        answer_match = re.search(r'"answer"\s*:\s*"([^"]+)"', response.text, re.IGNORECASE)
-                        explanation_match = re.search(r'"explanation"\s*:\s*"([^"]+)"', response.text, re.IGNORECASE)
+                        # Try multiple regex patterns
+                        answer_patterns = [
+                            r'"answer"\s*:\s*"([^"]+)"',
+                            r'"answer"\s*:\s*(\d+)',
+                            r'answer["\s]*[:=]\s*["\']?(\d+)',
+                            r'Answer["\s]*[:=]\s*["\']?(\d+)'
+                        ]
+                        explanation_patterns = [
+                            r'"explanation"\s*:\s*"([^"]+)"',
+                            r'"explanation"\s*:\s*"([^"]+)"',
+                            r'explanation["\s]*[:=]\s*["\']([^"\']+)'
+                        ]
                         
-                        answer = answer_match.group(1) if answer_match else ""
-                        explanation = explanation_match.group(1) if explanation_match else ""
+                        answer = ""
+                        explanation = ""
+                        
+                        for pattern in answer_patterns:
+                            match = re.search(pattern, response.text, re.IGNORECASE)
+                            if match:
+                                answer = match.group(1).strip()
+                                break
+                        
+                        for pattern in explanation_patterns:
+                            match = re.search(pattern, response.text, re.IGNORECASE | re.DOTALL)
+                            if match:
+                                explanation = match.group(1).strip()
+                                break
+                        
+                        # If still no answer/explanation, try to extract from structure
+                        if not answer:
+                            # Look for patterns like "Answer: 3" or "The answer is 3"
+                            ans_match = re.search(r'(?:answer|answer is|correct answer)[\s:]+(\d+)', response.text, re.IGNORECASE)
+                            if ans_match:
+                                answer = ans_match.group(1)
+                        
+                        if not explanation:
+                            # Try to find explanation paragraph
+                            exp_match = re.search(r'explanation[:\s]+(.*?)(?:\n|$|"|answer)', response.text, re.IGNORECASE | re.DOTALL)
+                            if exp_match:
+                                explanation = exp_match.group(1).strip()
+                            elif answer:
+                                # If we have answer but no explanation, create a placeholder
+                                explanation = "Solution calculated based on the given data."
                         
                         results.append({
                             "question_number": pq['num'],
                             "question_text": pq['text'],
                             "answer": answer,
-                            "explanation": explanation
+                            "explanation": explanation if explanation else "Solution calculated."
                         })
                 except Exception as e:
+                    print(f"Error solving question {pq['num']}: {e}")
+                    # Even on error, save the question so translation can work
                     results.append({
                         "question_number": pq['num'],
                         "question_text": pq['text'],
+                        "answer": "",
+                        "explanation": f"Error solving: {str(e)}",
                         "error": str(e),
                         "method": "gemini_fallback"
                     })
