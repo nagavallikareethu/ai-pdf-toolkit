@@ -437,7 +437,10 @@ Return only 2-line explanation text.
             # Process each question individually with Gemini
             # Include page context for questions that might need chart/table data
             page_context = text[:2000]  # First 2000 chars usually contain chart/table descriptions
-            for pq in page_questions:
+            for pq_idx, pq in enumerate(page_questions):
+                # Add delay between solving requests to avoid rate limits
+                if pq_idx > 0:
+                    time.sleep(1)  # 1 second delay between solving requests
                 prompt = f"""You are an expert exam solver. Solve this question completely.
 
 PAGE CONTEXT (may contain chart/table data):
@@ -535,16 +538,49 @@ Return ONLY the JSON object:"""
                             "explanation": explanation if explanation else "Solution calculated."
                         })
                 except Exception as e:
-                    print(f"Error solving question {pq['num']}: {e}")
-                    # Even on error, save the question so translation can work
-                    results.append({
-                        "question_number": pq['num'],
-                        "question_text": pq['text'],
-                        "answer": "",
-                        "explanation": f"Error solving: {str(e)}",
-                        "error": str(e),
-                        "method": "gemini_fallback"
-                    })
+                    error_str = str(e)
+                    # Check if it's a quota/rate limit error
+                    if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
+                        print(f"Quota/Rate limit hit for question {pq['num']}. Waiting 30 seconds before retry...")
+                        time.sleep(30)  # Wait 30 seconds for quota to reset
+                        try:
+                            # Retry once after waiting
+                            response = model.generate_content(prompt)
+                            raw_output = extract_json_block(response.text)
+                            parsed = extract_inner_json(response.text)
+                            if parsed and isinstance(parsed, dict):
+                                result = {
+                                    "question_number": parsed.get("question_number", pq['num']),
+                                    "question_text": parsed.get("question_text", pq['text']),
+                                    "answer": parsed.get("answer", ""),
+                                    "explanation": parsed.get("explanation", "")
+                                }
+                                results.append(result)
+                            else:
+                                # If retry still fails, save question without solution
+                                results.append({
+                                    "question_number": pq['num'],
+                                    "question_text": pq['text'],
+                                    "answer": "",
+                                    "explanation": "Solution could not be calculated due to API quota limit."
+                                })
+                        except:
+                            # If retry fails, save question without solution
+                            results.append({
+                                "question_number": pq['num'],
+                                "question_text": pq['text'],
+                                "answer": "",
+                                "explanation": "Solution could not be calculated due to API quota limit."
+                            })
+                    else:
+                        # Other errors - save with clean error message
+                        print(f"Error solving question {pq['num']}: {error_str[:100]}")  # Only print first 100 chars
+                        results.append({
+                            "question_number": pq['num'],
+                            "question_text": pq['text'],
+                            "answer": "",
+                            "explanation": "Solution could not be calculated. Please try again later."
+                        })
             continue  # Skip the main prompt processing below
         
         # If no question splits found, use the original approach but with enhanced cleaning
@@ -732,9 +768,10 @@ def translate_items(items, target_lang):
         a = item.get("answer", "")
         e = item.get("explanation", "")
 
-        # Add small delay between requests to avoid rate limits (except first request)
+        # Add delay between requests to avoid rate limits
+        # Free tier is 250 requests/day, so add delays to spread requests out
         if idx > 0:
-            time.sleep(0.5)
+            time.sleep(2)  # Increased delay to 2 seconds between translations
 
         prompt = f"""Translate the following solved MCQ into {target_lang}. 
 
@@ -822,17 +859,24 @@ Return ONLY the JSON object:"""
                         
             except Exception as err:
                 error_str = str(err)
-                # Check if it's a rate limit error
-                if "429" in error_str or "quota" in error_str.lower():
+                # Check if it's a rate limit/quota error
+                is_quota_error = "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower()
+                
+                if is_quota_error:
                     if attempt < max_retries - 1:
-                        print(f"Rate limit hit for question {item.get('question_number', '?')}, waiting {retry_delay}s before retry...")
-                        time.sleep(retry_delay)
-                        retry_delay *= 2  # Exponential backoff
+                        wait_time = retry_delay * (2 ** attempt)  # Exponential backoff: 2s, 4s, 8s
+                        print(f"Quota/Rate limit hit for question {item.get('question_number', '?')}, waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
+                        retry_delay *= 2
                         continue
                     else:
-                        item[f"translation_error_{lang_lower}"] = "Max retries exceeded for rate limit"
-                        translated.append(item)
-                        print(f"Error: Translation failed for question {item.get('question_number', '?')} after {max_retries} retries due to rate limit.")
+                        # Max retries exceeded - save with original English text (skip translation)
+                        print(f"Quota exceeded for question {item.get('question_number', '?')}. Using original English text.")
+                        # Don't add translation_error - just use original text
+                        merged = {**item}
+                        # Keep original English text instead of failing translation
+                        translated.append(merged)
+                        success = True
                         break
                 else:
                     # Not a rate limit error - retry once more, then give up
@@ -842,11 +886,11 @@ Return ONLY the JSON object:"""
                         retry_delay *= 2
                         continue
                     else:
-                        # Final attempt failed - store with error but still add to list
-                        item[f"translation_error_{lang_lower}"] = str(err)
-                        translated.append(item)
-                        print(f"Error: Translation failed for question {item.get('question_number', '?')} after {max_retries} attempts: {err}")
-                        success = True  # Mark as processed to continue with next item
+                        # Final attempt failed - save with original English text (skip translation)
+                        print(f"Translation failed for question {item.get('question_number', '?')}. Using original English text.")
+                        merged = {**item}
+                        translated.append(merged)
+                        success = True
                         break
         
         if not success and f"translation_error_{lang_lower}" not in item:
