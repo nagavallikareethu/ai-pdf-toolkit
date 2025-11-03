@@ -194,9 +194,10 @@ Return only 2-line explanation text.
         # First, try to split text by question numbers BEFORE sending to Gemini
         # This helps ensure we extract questions individually
         # Match question numbers (typically 31-65, 2 digits, or single/double digit in some contexts)
-        question_matches = list(re.finditer(r'\b(\d{1,2})\.\s+(?!\d+\s+[A-Z])', text))
+        # Look for patterns like "31.", "32.", etc. followed by text (not another number)
+        question_matches = list(re.finditer(r'\b(\d{1,2})\.\s+(?!\d+\.\s+[A-Z]|Total|The|No\.|Class|Ratio)', text))
         
-        # Filter out invalid question numbers (too large to be question numbers like 136800, etc.)
+        # Filter out invalid question numbers and detect actual question range
         valid_questions = []
         for match in question_matches:
             q_num_str = match.group(1)
@@ -207,6 +208,17 @@ Return only 2-line explanation text.
                     valid_questions.append(match)
             except ValueError:
                 continue
+        
+        # If we have questions, detect the actual question range
+        # If most questions are 31+, then filter out Q1, Q2, Q3, etc. (likely headers/metadata)
+        if len(valid_questions) > 3:
+            q_nums = [int(m.group(1)) for m in valid_questions]
+            min_q = min(q_nums)
+            max_q = max(q_nums)
+            # If question range starts at 31+ and we have Q1-Q30, they're likely not real questions
+            if min_q >= 31 and min_q < max_q:
+                # Filter out questions < 31 (likely headers/metadata)
+                valid_questions = [m for m in valid_questions if int(m.group(1)) >= 31]
         
         if len(valid_questions) > 1:
             # Found multiple valid questions - process each separately
@@ -247,9 +259,9 @@ Return only 2-line explanation text.
                     else:
                         prev_q_end = 0
                     
-                    start_pos = max(prev_q_end, match_start - 100)  # Start at most 100 chars before question number
+                    start_pos = max(prev_q_end, match_start - 200)  # Start at most 200 chars before question number
                 else:
-                    start_pos = max(0, match_start - 100)  # For first question, look back up to 100 chars
+                    start_pos = max(0, match_start - 200)  # For first question, look back up to 200 chars
                 
                 # Find end position (next question number or end of text)
                 if i + 1 < len(valid_questions):
@@ -285,14 +297,36 @@ Return only 2-line explanation text.
                 if q_num_match:
                     # Found question number, extract text starting from it
                     q_text_after_num = q_text[q_num_match.end():].strip()
-                    # Now find where the actual question text starts
-                    question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|A\s+sum|A\s+tap|A\s+boat|A\s+shopkeeper|Sirisha|The\s+population|Area\s+of|The\s+ratio)', q_text_after_num, re.IGNORECASE)
+                    
+                    # Look for question text - try to find the actual start
+                    # First, look for complete question patterns
+                    question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|A\s+sum|A\s+tap|A\s+boat|A\s+shopkeeper|Sirisha|The\s+population|Area\s+of|The\s+ratio|how\s+much|find\s+the|what\s+was|what\s+is|what\s+should)', q_text_after_num, re.IGNORECASE)
                     if question_start:
                         # Question starts here, include the number too
                         q_text = f"{q_num}. {q_text_after_num[question_start.start():]}"
                     else:
-                        # No clear start found, use text after number as-is
-                        q_text = f"{q_num}. {q_text_after_num}"
+                        # No clear start found - might be pattern question or already complete
+                        # Use text after number as-is if it's substantial
+                        if len(q_text_after_num) > 20:
+                            q_text = f"{q_num}. {q_text_after_num}"
+                        else:
+                            # Too short - might be incomplete, try to find more context before
+                            # Look back in original text before this question number
+                            if i > 0 and match_start > 0:
+                                # Try to get more context from before
+                                context_start = max(0, match_start - 300)
+                                context_text = text[context_start:match_start]
+                                # Find question text in context
+                                context_q_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|A\s+sum|A\s+tap|how\s+much|find\s+the)', context_text, re.IGNORECASE)
+                                if context_q_start:
+                                    # Found question start in context, include it
+                                    full_q = context_text[context_q_start.start():] + text[match_start:end_pos]
+                                    q_text = full_q.strip()
+                                else:
+                                    # Still can't find start, use what we have
+                                    q_text = f"{q_num}. {q_text_after_num}"
+                            else:
+                                q_text = f"{q_num}. {q_text_after_num}"
                 else:
                     # Question number not found in text, try to find where question starts
                     question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4})', q_text, re.IGNORECASE)
