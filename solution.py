@@ -263,7 +263,7 @@ Return only 2-line explanation text.
                             continue  # Skip incomplete questions
                 
                 # Clean up: remove leading question number and any whitespace
-                q_text = re.sub(rf'^{re.escape(q_num)}\.\s*', '', q_text).strip()
+                q_text = re.sub(rf'^{q_num}\.\s*', '', q_text).strip()
                 
                 # Validate question completeness - look for actual question content
                 # Must have meaningful question text (not just numbers or metadata)
