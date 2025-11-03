@@ -191,35 +191,57 @@ Return only 2-line explanation text.
             continue
 
         # 2) Fallback to LLM for MCQs / textual questions
+        # First, try to split text by question numbers to help extraction
+        # Find all question numbers in the text (e.g., "31.", "32.", "33.")
+        question_pattern = r'\b(\d{2,})\.\s+(?![A-Z]{2,}\s)'  # Match 2+ digit numbers followed by period and space, but not all caps words
+        
+        # Try to extract questions more intelligently before sending to Gemini
+        # Split text by question markers
+        question_splits = re.split(r'\b(\d{2,})\.\s+', text)
+        
+        # If we found question splits, process each question separately for better extraction
+        if len(question_splits) > 1:
+            # Reconstruct questions with their numbers
+            page_questions = []
+            for i in range(1, len(question_splits), 2):
+                if i+1 < len(question_splits):
+                    q_num = question_splits[i]
+                    q_text = question_splits[i+1].strip()
+                    if q_text and len(q_text) > 20:  # Only process if there's substantial text
+                        page_questions.append({"num": q_num, "text": q_text})
+        
         prompt = f"""You are an expert exam solver. Extract and solve ONLY the actual questions from the text below.
 
 CRITICAL INSTRUCTIONS - READ CAREFULLY:
-1. IGNORE ALL of the following - DO NOT include them in question_text:
-   - Headers like "Sreedhar's CCE", "SBI CLERK", "LIC Asst.", "PRELIMS MT", "NIACL Asst.", "TIER-I"
-   - Section titles like "NUMERICAL ABILITY"
-   - Directions/Instructions like "Directions (31-35): Study the data carefully..."
-   - Chart/Table descriptions like "The Bar-chart shows students registered..."
-   - Page numbers, footer text, exam metadata
+1. IGNORE COMPLETELY and DO NOT include in question_text ANY of the following:
+   - Headers: "Sreedhar's CCE", "SBI CLERK", "LIC Asst.", "PRELIMS MT", "NIACL Asst.", "TIER-I", "MT - 15", "MT - 117"
+   - Section titles: "NUMERICAL ABILITY"
+   - Directions: "Directions (31-35):", "Study the data carefully", "answer the following questions"
+   - Chart descriptions: "The Bar-chart shows students registered for three different exams..."
+   - Chart data: "0 10 20 30 40 50 60", "2012 2013 2014 2015 2016", "Years in Lakhs", "MTS CGL CHSL"
+   - Footer text: "SBI CLERK / LIC Asst. PRELIMS MODEL TEST - 117", "NIACL Asst. TIER-I MODEL TEST - 15"
+   - Page numbers, option numbers that appear before questions
    
-2. Extract ONLY the numbered questions that start with digits followed by a period (e.g., "31.", "32.", "33.")
+2. Extract ONLY the numbered questions (e.g., questions starting with "31.", "32.", "33.")
 
-3. For each question, the question_text field should contain:
-   - ONLY the actual question text starting from the question itself
-   - NOT any text before the question number
-   - Example CORRECT: "Find the ratio of total students registered for all the three exams in 2012 and 2013 together to total students registered for all the three exams in 2014 and 2015 together?"
-   - Example WRONG: "31. 1 Sreedhar's CCE SBI CLERK... Find the ratio..." (DO NOT include headers/directions)
+3. For EACH question found:
+   - question_number: Extract the question number (e.g., "31", "32", "33")
+   - question_text: Extract ONLY the actual question sentence/paragraph that ends with "?"
+     * Start from the first word of the actual question (like "Find", "Calculate", "What", "How", "Which", "Total", "Average")
+     * End at the question mark "?"
+     * DO NOT include any headers, directions, or metadata before the question
+     * Example CORRECT: "Find the ratio of total students registered for all the three exams in 2012 and 2013 together to total students registered for all the three exams in 2014 and 2015 together?"
+     * Example WRONG: "31. 1 Sreedhar's CCE SBI CLERK... Find the ratio..." (DO NOT include "31. 1 Sreedhar's CCE...")
+   - answer: The correct option number (e.g., "1", "2", "3", "4", "5") based on the data
+   - explanation: A concise 2-line explanation of how to solve this question
 
-4. question_number should be just the number (e.g., "31", "32", "33") without any prefix
-
-5. answer should be the correct option number (e.g., "1", "2", "3", "4", "5") or the option letter/value
-
-6. explanation should be a concise 2-line explanation
+4. If you see multiple questions on a page, extract ALL of them separately.
 
 CRITICAL: Return ONLY a JSON array (no markdown, no code blocks, no other text). Start with [ and end with ].
 Example format:
 [
-  {{"question_number": "31", "question_text": "Find the ratio of total students registered for all the three exams in 2012 and 2013 together to total students registered for all the three exams in 2014 and 2015 together?", "answer": "3", "explanation": "Total students in 2012+2013 = X. Total in 2014+2015 = Y. Ratio = X:Y."}},
-  {{"question_number": "32", "question_text": "Average number of students registered for MTS exam in all the five years together is how much less/more than the average number of students registered for CHSL exam in all the five years together?", "answer": "2", "explanation": "Calculate average MTS and average CHSL, then find the difference."}}
+  {{"question_number": "31", "question_text": "Find the ratio of total students registered for all the three exams in 2012 and 2013 together to total students registered for all the three exams in 2014 and 2015 together?", "answer": "3", "explanation": "Calculate totals for 2012+2013 and 2014+2015, then find ratio."}},
+  {{"question_number": "32", "question_text": "Average number of students registered for MTS exam in all the five years together is how much less/more than the average number of students registered for CHSL exam in all the five years together?", "answer": "2", "explanation": "Calculate average MTS and average CHSL from the data, then find difference."}}
 ]
 
 Input text:
@@ -239,16 +261,72 @@ Input text:
                     for q in parsed:
                         q_text = q.get("question_text", "")
                         if q_text:
-                            # Remove common headers/directions that might leak through
-                            q_text = re.sub(r'^.*?Sreedhar\'s\s+CCE[^?]*?\?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                            q_text = re.sub(r'^.*?NUMERICAL\s+ABILITY[^?]*?\?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                            q_text = re.sub(r'^.*?Directions\s*\([^)]+\)[^?]*?\?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                            q_text = re.sub(r'^.*?PRELIMS\s+MT[^?]*?\?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                            q_text = re.sub(r'^.*?Study\s+the\s+data[^?]*?\?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                            # Remove leading question number if followed by unwanted text
-                            q_text = re.sub(r'^\d+\.\s*\d+\s+[A-Z\s]+(?:PRELIMS|MT|NUMERICAL|Directions)[^?]*?\?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                            # Clean up multiple spaces
+                            # Step 1: Find the actual question number pattern (e.g., "31.", "32.")
+                            q_num = q.get("question_number", "")
+                            if q_num:
+                                # Try to find text starting from this question number
+                                pattern = rf'\b{q_num}\.\s*'
+                                match = re.search(pattern, q_text, re.IGNORECASE)
+                                if match:
+                                    # Extract text starting from the question number
+                                    q_text = q_text[match.start():]
+                                else:
+                                    # If pattern not found, look for any number followed by period
+                                    match = re.search(rf'^\d+\.\s*{q_num}\.\s*', q_text)
+                                    if match:
+                                        q_text = q_text[match.end():]
+                            
+                            # Step 2: Remove all unwanted headers/directions patterns
+                            # Remove patterns that appear at the start (even after question number)
+                            unwanted_patterns = [
+                                r'^\d+\.\s*\d+\s+[A-Z][^?]*?Sreedhar\'s\s+CCE[^?]*?',
+                                r'Sreedhar\'s\s+CCE[^?]*?',
+                                r'SBI\s+CLERK[^?]*?',
+                                r'LIC\s+Asst\.[^?]*?',
+                                r'PRELIMS\s+MT[^?]*?',
+                                r'NIACL\s+Asst\.[^?]*?',
+                                r'TIER-I\s+MT[^?]*?',
+                                r'NUMERICAL\s+ABILITY[^?]*?',
+                                r'Directions\s*\([^)]+\)[^?]*?',
+                                r'Study\s+the\s+data\s+carefully[^?]*?',
+                                r'answer\s+the\s+following\s+questions[^?]*?',
+                                r'The\s+Bar-chart\s+shows[^?]*?',
+                                r'MODEL\s+TEST[^?]*?',
+                                r'\d+\s+\d{4}\s+\d{4}[^?]*?',  # Remove chart axis labels like "0 10 20 30..."
+                                r'Years\s+in\s+Lakhs[^?]*?',
+                                r'MTS\s+CGL\s+CHSL[^?]*?(?=\d+\.)',  # Remove legend but keep if followed by question number
+                            ]
+                            
+                            for pattern in unwanted_patterns:
+                                q_text = re.sub(pattern, '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                            
+                            # Step 3: Find the actual question (starts with a capital letter or number, ends with ?)
+                            # Try to extract from first meaningful sentence that ends with ?
+                            question_match = re.search(r'([A-Z][^?]*?\?)', q_text)
+                            if question_match:
+                                q_text = question_match.group(1)
+                            else:
+                                # Fallback: remove everything before the first meaningful question text
+                                # Look for patterns like "Find the", "Calculate", "What is", etc.
+                                question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4})', q_text, re.IGNORECASE)
+                                if question_start:
+                                    q_text = q_text[question_start.start():]
+                            
+                            # Step 4: Remove any remaining unwanted text before question
+                            # Remove any leading numbers or metadata patterns
+                            q_text = re.sub(r'^\d+\.\s*\d+\s+[A-Z\s/]+', '', q_text)  # Remove "31. 1 SBI CLERK / LIC"
+                            q_text = re.sub(r'^\d+\.\s*[A-Z][^A-Z]*?(?=[A-Z][a-z])', '', q_text)  # Remove leading metadata
+                            
+                            # Step 5: Clean up multiple spaces and normalize
                             q_text = re.sub(r'\s+', ' ', q_text).strip()
+                            
+                            # Step 6: Ensure question ends with ? and contains actual question words
+                            if not q_text.endswith('?'):
+                                # Try to find the question mark in the text
+                                q_match = re.search(r'([^?]*\?)', q_text)
+                                if q_match:
+                                    q_text = q_match.group(1)
+                            
                             q["question_text"] = q_text
                         
                         # Ensure question_number is present and clean
