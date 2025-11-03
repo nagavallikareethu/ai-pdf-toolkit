@@ -227,7 +227,7 @@ Return only 2-line explanation text.
                 q_text = re.sub(r'MODEL\s+TEST[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
                 
                 # Find the actual question (starts with a meaningful word)
-                question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|?\s*\d+\.\s+[A-Z])', q_text, re.IGNORECASE)
+                question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4})', q_text, re.IGNORECASE)
                 if question_start:
                     q_text = q_text[question_start.start():]
                 
