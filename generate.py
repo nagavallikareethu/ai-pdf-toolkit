@@ -212,7 +212,25 @@ def parse_mcq_text(text):
             else:
                 # Add to current question parts (question text or continuation)
                 if line:
-                    current_q['parts'].append(line)
+                    # Before adding to parts, check if this might be an option starting with ")"
+                    # This catches options that might have been missed above
+                    if re.match(r'\)\s*[^\s]', line) and len(current_q.get('options', [])) < 4:
+                        # This looks like an option line starting with ")"
+                        opt_count = len(current_q.get('options', []))
+                        if opt_count < 4:
+                            option_letter = ['A', 'B', 'C', 'D'][opt_count]
+                            option_text = re.sub(r'^\)\s*', '', line).strip()
+                            if option_text:
+                                if not current_q.get('options'):
+                                    current_q['options'] = []
+                                current_q['options'].append(f"{option_letter}) {option_text}")
+                                print(f"DEBUG: Caught option in else clause: '{line[:50]}' -> '{option_letter}) {option_text[:50]}'")
+                            else:
+                                current_q['parts'].append(line)
+                        else:
+                            current_q['parts'].append(line)
+                    else:
+                        current_q['parts'].append(line)
     
     if current_q:
         if current_q['parts']:
