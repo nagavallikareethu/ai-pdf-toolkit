@@ -344,33 +344,59 @@ Return only 2-line explanation text.
                 # Clean up: remove leading question number and any whitespace
                 q_text = re.sub(rf'^{q_num}\.\s*', '', q_text).strip()
                 
+                # Remove directions and instructions
+                q_text = re.sub(r'Direction\s*\([^)]+\):.*?(?=\d+\.|$)', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                q_text = re.sub(r'What\s+will\s+come\s+in\s+the\s+place\s+of\s+question\s+mark', '', q_text, flags=re.IGNORECASE)
+                q_text = re.sub(r'in\s+the\s+following\s+series\?', '', q_text, flags=re.IGNORECASE)
+                q_text = re.sub(r'in\s+the\s+following\s+questions\?', '', q_text, flags=re.IGNORECASE)
+                q_text = q_text.strip()
+                
                 # Validate question completeness - look for actual question content
+                # Skip if it's clearly a data description or class description (not a question)
+                is_data_description = (
+                    re.search(r'^(Class\s+[ABC]:|Total\s+no\.\s+of\s+students\s+are)', q_text, re.IGNORECASE) or
+                    re.search(r'students\s+are\s+in\s+group\s+[XYZ]', q_text, re.IGNORECASE) or
+                    re.search(r'Ratio\s+of\s+the\s+number\s+of\s+students', q_text, re.IGNORECASE) or
+                    re.search(r'no\.\s+of\s+students\s+in\s+group', q_text, re.IGNORECASE)
+                )
+                
+                if is_data_description and '?' not in q_text:
+                    continue  # Skip data descriptions that aren't questions
+                
                 # Must have meaningful question text (not just numbers or metadata)
-                has_question_words = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|ratio|percent|number|students|amount|value|time|days|speed|probability|gain|loss)', q_text, re.IGNORECASE)
+                has_question_words = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|ratio|percent|number|students|amount|value|time|days|speed|probability|gain|loss|Area|A\s+sum|A\s+tap|A\s+boat|A\s+shopkeeper|Sirisha|population|tank|tap|empty|fill)', q_text, re.IGNORECASE)
                 
                 # Check if it's a number series or pattern question
-                is_pattern_question = re.search(r'^\d+\s+\d+\s+\d+\s+\?', q_text) or re.search(r'^\d+\s+\d+\s+\d+', q_text)
+                is_pattern_question = re.search(r'^\d+\s+\d+\s+\d+\s+\?', q_text) or (re.search(r'^\d+\s+\d+\s+\d+', q_text) and '?' in q_text)
                 
                 # Check if question is complete (ends with ? or has options)
                 has_question_mark = '?' in q_text
                 has_options = re.search(r'1\)\s+|2\)\s+|3\)\s+|4\)\s+|5\)\s+', q_text)
                 
+                # Question must:
+                # 1. Have question words OR be a pattern question OR
+                # 2. End with ? (complete question) OR have options (complete question)
+                # 3. Be long enough (at least 20 chars for pattern, 30 for regular)
                 is_valid = (
-                    has_question_words or 
-                    is_pattern_question or
-                    (has_question_mark and len(q_text) > 30) or
-                    (has_options and len(q_text) > 40)
+                    (has_question_words or is_pattern_question) and
+                    (has_question_mark or has_options or is_pattern_question) and
+                    len(q_text) >= (20 if is_pattern_question else 30)
                 )
                 
-                # Skip if too short, has no question content, or looks like data/metadata
-                if not is_valid or len(q_text) < 20:
+                # Skip if not valid
+                if not is_valid:
                     continue
                 
-                # Skip if it looks like a data value or metadata (e.g., "136800", "Total no. of students are")
-                if re.search(r'^(Total\s+no\.|The\s+ratio|No\.\s+of)', q_text, re.IGNORECASE) and not has_question_mark:
-                    # Only include if it has a question mark
-                    if not has_question_mark:
-                        continue
+                # Additional filtering: skip if looks like incomplete fragment
+                # Questions should start with capital letter or question word
+                starts_properly = (
+                    q_text[0].isupper() or
+                    q_text.startswith(('Find', 'Calculate', 'What', 'How', 'Which', 'Total', 'Average', 'Out of', 'In 201', 'A ', 'The ', 'Area', 'Sirisha')) or
+                    is_pattern_question
+                )
+                
+                if not starts_properly and len(q_text) < 50:
+                    continue  # Skip fragments that don't start properly
                 
                 page_questions.append({"num": q_num, "text": q_text})
             
