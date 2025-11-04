@@ -89,7 +89,7 @@ D) 6
 Answer: B
 
 2Document content:
-{pdf_text[:10000]}
+    {pdf_text[:10000]}
 
 Now generate {n} MCQs following the format above EXACTLY. Remember: 
 - Use A), B), C), D) for options (NOT just ) or 1), 2), 3), 4))
@@ -124,6 +124,17 @@ def parse_mcq_text(text):
     # Try to add line breaks where questions start
     text = re.sub(r'(\d+)\.', r'\n\1.', text)
     
+    # Fix concatenated options like "A) 120%B) 135%C) 150%D) 100%" - split them
+    # Also handle "Options:A) 120%B) 135%C) 150%D) 100%" format
+    # First, handle "Options:" prefix followed by concatenated options
+    text = re.sub(r'(Options?\s*[:：]\s*)([A-E]\)\s*[^\n]+?)([A-E]\))', r'\1\2\n\3', text, flags=re.IGNORECASE)
+    # Match pattern: A)textB)textC)textD)text (no space after closing paren)
+    text = re.sub(r'([A-E]\))([^\s\n])([A-E]\))', r'\1 \2\n\3', text, flags=re.IGNORECASE)
+    # Also handle cases with space: "A) 120%B) 135%" -> "A) 120%\nB) 135%"
+    text = re.sub(r'([A-E]\)\s*[^\n]+?)([A-E]\))', r'\1\n\2', text, flags=re.IGNORECASE)
+    # Handle multiple concatenated options in sequence
+    text = re.sub(r'([A-E]\)\s*[^\n]+?)([A-E]\)\s*[^\n]+?)([A-E]\)\s*[^\n]+?)([A-E]\))', r'\1\n\2\n\3\n\4', text, flags=re.IGNORECASE)
+    
     questions = []
     lines = text.split('\n')
     
@@ -147,11 +158,33 @@ def parse_mcq_text(text):
                 'answer': None
             }
         elif current_q:
+            # Check if this line starts with "Options:" followed by concatenated options
+            # Handle "Options:A) 120%B) 135%C) 150%D) 100%" format
+            if re.match(r'^Options?\s*[:：]\s*([A-E]\)|[1-5]\))', line, re.IGNORECASE):
+                # Extract options from this line
+                options_part = re.sub(r'^Options?\s*[:：]\s*', '', line, flags=re.IGNORECASE).strip()
+                # Split concatenated options
+                split_options = re.split(r'([A-E]\)|[1-5]\))', options_part, flags=re.IGNORECASE)
+                if len(split_options) > 3:  # Found multiple options
+                    for i in range(1, len(split_options), 2):
+                        if i + 1 < len(split_options):
+                            opt_marker = split_options[i]
+                            opt_text = split_options[i + 1].strip() if i + 1 < len(split_options) else ""
+                            if opt_marker and opt_text:
+                                if not current_q.get('options'):
+                                    current_q['options'] = []
+                                current_q['options'].append(f"{opt_marker} {opt_text}")
+                                print(f"DEBUG: Extracted option from 'Options:' line: '{opt_marker} {opt_text[:30]}'")
+                else:
+                    # Single option after "Options:" - treat as option line
+                    if not current_q.get('options'):
+                        current_q['options'] = []
+                    current_q['options'].append(options_part)
             # Check if this is an answer - handle multiple formats
             # English: "Answer:", "Answer: B", "Answer:B"
             # Hindi: "उत्तर:", "उत्तर: B"
             # Telugu: "సమాధానం:", etc.
-            if (line.startswith('Answer:') or 
+            elif (line.startswith('Answer:') or 
                 re.match(r'^(Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', line, re.IGNORECASE)):
                 # Try to extract answer value (A, B, C, D or 1, 2, 3, 4)
                 answer_match = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತर)\s*[:=]\s*([A-Z0-9]+)', line, re.IGNORECASE)
@@ -172,10 +205,25 @@ def parse_mcq_text(text):
             # Check if this is an option (A), B), C), D) or 1), 2), 3), 4), 5))
             # More flexible: allow spaces after marker, handle various formats
             elif re.match(r'^[A-E]\)\s*|^[1-5]\)\s*', line, re.IGNORECASE):
-                # This is an option line
-                if not current_q.get('options'):
-                    current_q['options'] = []
-                current_q['options'].append(line)
+                # This is an option line - check if it contains multiple concatenated options
+                # Split if line contains multiple option markers like "A) 120%B) 135%C) 150%D) 100%"
+                split_options = re.split(r'([A-E]\)|[1-5]\))', line, flags=re.IGNORECASE)
+                if len(split_options) > 3:  # Found multiple options in one line
+                    # Reconstruct options
+                    for i in range(1, len(split_options), 2):
+                        if i + 1 < len(split_options):
+                            opt_marker = split_options[i]
+                            opt_text = split_options[i + 1].strip() if i + 1 < len(split_options) else ""
+                            if opt_marker and opt_text:
+                                if not current_q.get('options'):
+                                    current_q['options'] = []
+                                current_q['options'].append(f"{opt_marker} {opt_text}")
+                                print(f"DEBUG: Split concatenated option: '{line[:50]}' -> '{opt_marker} {opt_text[:30]}'")
+                else:
+                    # Single option line
+                    if not current_q.get('options'):
+                        current_q['options'] = []
+                    current_q['options'].append(line)
             # Handle lines that start with just ")" - assign sequential letters A, B, C, D
             # Match ") " with space OR ")180" without space
             elif re.match(r'^\)\s*[^\s]', line):
@@ -372,25 +420,39 @@ async def save_pdf_playwright(text, outpath, lang):
                 if q.get("options") and len(q["options"]) > 0:
                     options_html = '<div style="margin: 8px 0;"><strong>Options:</strong><br>'
                     for opt in q["options"]:
-                        # Ensure option markers (A), B), C), D) or 1), 2), 3), 4)) use English font
-                        # Extract marker and text, render marker with English font
-                        opt_match = re.match(r'^([A-E]\)|[1-5]\))\s*(.*)', opt, re.IGNORECASE)
-                        if opt_match:
-                            opt_marker = opt_match.group(1)
-                            opt_text = opt_match.group(2)
-                            # Marker in English font, text in Indic font
-                            options_html += f'<span style="margin-right: 15px;"><span style="font-family: Arial, sans-serif;">{opt_marker}</span> {clean_text_html(opt_text)}</span><br>'
+                        # Check if option contains multiple concatenated options and split them
+                        opt_clean = str(opt).strip()
+                        # Split if contains multiple option markers like "A) 120%B) 135%C) 150%D) 100%"
+                        split_options = re.split(r'([A-E]\)|[1-5]\))', opt_clean, flags=re.IGNORECASE)
+                        
+                        if len(split_options) > 3:  # Multiple options in one string
+                            # Process each split option
+                            for i in range(1, len(split_options), 2):
+                                if i + 1 < len(split_options):
+                                    opt_marker = split_options[i]
+                                    opt_text = split_options[i + 1].strip() if i + 1 < len(split_options) else ""
+                                    if opt_marker and opt_text:
+                                        # Each option on its own line with proper spacing
+                                        options_html += f'<div style="margin: 4px 0;"><span style="font-family: Arial, sans-serif; font-weight: bold;">{opt_marker}</span> {clean_text_html(opt_text)}</div>'
                         else:
-                            # Fallback: try to find marker anywhere in option
-                            opt_marker_match = re.search(r'([A-E]\)|[1-5]\))', opt, re.IGNORECASE)
-                            if opt_marker_match:
-                                marker_pos = opt_marker_match.start()
-                                opt_marker = opt_marker_match.group(1)
-                                opt_text = opt[:marker_pos] + opt[marker_pos + len(opt_marker):]
-                                options_html += f'<span style="margin-right: 15px;"><span style="font-family: Arial, sans-serif;">{opt_marker}</span> {clean_text_html(opt_text.strip())}</span><br>'
+                            # Single option - extract marker and text
+                            opt_match = re.match(r'^([A-E]\)|[1-5]\))\s*(.*)', opt_clean, re.IGNORECASE)
+                            if opt_match:
+                                opt_marker = opt_match.group(1)
+                                opt_text = opt_match.group(2)
+                                # Each option on its own line (using <div> instead of <span> for proper line breaks)
+                                options_html += f'<div style="margin: 4px 0;"><span style="font-family: Arial, sans-serif; font-weight: bold;">{opt_marker}</span> {clean_text_html(opt_text)}</div>'
                             else:
-                                # No marker found, display as-is but clean HTML
-                                options_html += f'<span style="margin-right: 15px;">{clean_text_html(opt)}</span><br>'
+                                # Fallback: try to find marker anywhere in option
+                                opt_marker_match = re.search(r'([A-E]\)|[1-5]\))', opt_clean, re.IGNORECASE)
+                                if opt_marker_match:
+                                    marker_pos = opt_marker_match.start()
+                                    opt_marker = opt_marker_match.group(1)
+                                    opt_text = opt_clean[:marker_pos] + opt_clean[marker_pos + len(opt_marker):]
+                                    options_html += f'<div style="margin: 4px 0;"><span style="font-family: Arial, sans-serif; font-weight: bold;">{opt_marker}</span> {clean_text_html(opt_text.strip())}</div>'
+                                else:
+                                    # No marker found, display as-is but clean HTML
+                                    options_html += f'<div style="margin: 4px 0;">{clean_text_html(opt_clean)}</div>'
                     options_html += '</div>'
                     q_html += options_html
                 else:
@@ -416,7 +478,8 @@ async def save_pdf_playwright(text, outpath, lang):
                         options_html = '<div style="margin: 8px 0;"><strong>Options:</strong><br>'
                         for i, opt_text in enumerate(options_found[:4]):
                             opt_letter = option_letters[i]
-                            options_html += f'<span style="margin-right: 15px;"><span style="font-family: Arial, sans-serif;">{opt_letter})</span> {clean_text_html(opt_text)}</span><br>'
+                            # Each option on its own line (using <div> for proper line breaks)
+                            options_html += f'<div style="margin: 4px 0;"><span style="font-family: Arial, sans-serif; font-weight: bold;">{opt_letter})</span> {clean_text_html(opt_text)}</div>'
                         options_html += '</div>'
                         q_html += options_html
                         # Also update the question dict so it's saved
