@@ -63,7 +63,7 @@ LANG_OPTIONS = {
 }
 
 MAX_RETRIES = 3
-RETRY_DELAY = 2
+RETRY_DELAY = 1  # Reduced from 2 to 1 second for faster retries
 
 # ============================================================
 # ODIA LANGUAGE SPECIFIC SUPPORT
@@ -1523,7 +1523,10 @@ class JSONTranslator:
                     continue
 
                 # ⭐⭐ TRANSLATE ONLY APPROPRIATE CONTENT ⭐⭐
-                print(f"   🔄 TRANSLATING [{block_idx}]: {original_text[:60]}...")            
+                print(f"   🔄 TRANSLATING [{block_idx}]: {original_text[:60]}...")
+                # Add small delay between translation calls to avoid rate limits (reduced delay)
+                if block_idx > 1:
+                    time.sleep(0.3)  # Small delay between translation calls
                 translated_text = safe_translate(original_text, target_lang)
                 
                 # ⭐⭐ CRITICAL: Only add translated_content field, preserve all existing fields ⭐⭐
@@ -2050,7 +2053,7 @@ class PDFProcessingPipeline:
             
             # Small delay between languages to avoid API rate limits
             if len(choices) > 1:
-                time.sleep(2)
+                time.sleep(1)  # Reduced from 2 to 1 second
         
         # Step 3: PDF Generation
         print("\n📄 STEP 3: PDF GENERATION")
