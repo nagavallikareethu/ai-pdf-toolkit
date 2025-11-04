@@ -519,42 +519,46 @@ Return only 2-line explanation text.
                 
                 page_questions.append({"num": q_num, "text": q_text, "options": options_text})
             
-            # Process each question individually with Gemini
+            # Process questions in batches for better performance
             # Include page context for questions that might need chart/table data
             page_context = text[:2000]  # First 2000 chars usually contain chart/table descriptions
-            for pq_idx, pq in enumerate(page_questions):
-                # Add delay between solving requests to avoid rate limits
-                if pq_idx > 0:
-                    time.sleep(1)  # 1 second delay between solving requests
-                # Include options in prompt if available
-                options_section = ""
-                if pq.get('options'):
-                    options_section = f"\n\nOPTIONS:\n{pq['options']}"
+            
+            # Batch questions: Process 5 questions per API call instead of 1
+            batch_size = 5
+            for batch_start in range(0, len(page_questions), batch_size):
+                batch = page_questions[batch_start:batch_start + batch_size]
                 
-                prompt = f"""You are an expert exam solver. Solve this question completely.
+                # Add delay between batches to avoid rate limits
+                if batch_start > 0:
+                    time.sleep(0.5)  # Reduced delay to 0.5 seconds between batches
+                
+                # Build batch prompt with all questions in the batch
+                questions_text = ""
+                for pq in batch:
+                    options_section = ""
+                    if pq.get('options'):
+                        options_section = f"\nOPTIONS: {pq['options']}"
+                    questions_text += f"\n\nQUESTION {pq['num']}:\n{pq['text']}{options_section}\n"
+                
+                prompt = f"""You are an expert exam solver. Solve these {len(batch)} questions completely.
 
 PAGE CONTEXT (may contain chart/table data):
 {page_context}
-
-QUESTION {pq['num']}:
-{pq['text']}{options_section}
+{questions_text}
 
 IMPORTANT:
-1. Use the page context above if the question references data, charts, or tables
-2. If the question appears incomplete, try to solve it with available information
+1. Use the page context above if the questions reference data, charts, or tables
+2. If a question appears incomplete, try to solve it with available information
 3. Provide the correct answer option (1, 2, 3, 4, or 5) based on the options provided
 4. Provide a complete 2-3 line explanation showing your calculation or reasoning
 
-Return ONLY a JSON object (no array, no markdown, no code blocks). Start with {{ and end with }}:
-{{
-  "question_number": "{pq['num']}",
-  "question_text": "{pq['text']}",
-  "options": "{pq.get('options', '')}",
-  "answer": "1",
-  "explanation": "Step-by-step calculation and reasoning (2-3 lines)"
-}}
+Return ONLY a JSON array (no markdown, no code blocks). Start with [ and end with ]:
+[
+  {{"question_number": "31", "question_text": "...", "options": "...", "answer": "1", "explanation": "..."}},
+  {{"question_number": "32", "question_text": "...", "options": "...", "answer": "2", "explanation": "..."}}
+]
 
-Return ONLY the JSON object:"""
+Return ONLY the JSON array:"""
                 try:
                     response = model.generate_content(prompt)
                     raw_output = extract_json_block(response.text)
@@ -563,94 +567,94 @@ Return ONLY the JSON object:"""
                     parsed = None
                     try:
                         parsed = json.loads(raw_output)
+                        # If it's a single object, convert to array
+                        if isinstance(parsed, dict):
+                            parsed = [parsed]
                     except json.JSONDecodeError:
                         # Try to extract JSON from raw response using extract_inner_json
                         parsed = extract_inner_json(response.text)
+                        if parsed and isinstance(parsed, dict):
+                            parsed = [parsed]
                     
-                    if parsed and isinstance(parsed, dict):
-                        # Ensure all required fields are present
-                        result = {
-                            "question_number": parsed.get("question_number", pq['num']),
-                            "question_text": parsed.get("question_text", pq['text']),
-                            "options": parsed.get("options", pq.get('options', '')),
-                            "answer": parsed.get("answer", ""),
-                            "explanation": parsed.get("explanation", "")
-                        }
-                        results.append(result)
+                    if parsed and isinstance(parsed, list):
+                        # Process each question in the batch response
+                        for i, pq in enumerate(batch):
+                            if i < len(parsed):
+                                pq_result = parsed[i]
+                                result = {
+                                    "question_number": pq_result.get("question_number", pq['num']),
+                                    "question_text": pq_result.get("question_text", pq['text']),
+                                    "options": pq_result.get("options", pq.get('options', '')),
+                                    "answer": pq_result.get("answer", ""),
+                                    "explanation": pq_result.get("explanation", "")
+                                }
+                                results.append(result)
+                            else:
+                                # If batch response doesn't have enough items, process individually
+                                # Fallback: try to extract from response text
+                                results.append({
+                                    "question_number": pq['num'],
+                                    "question_text": pq['text'],
+                                    "options": pq.get('options', ''),
+                                    "answer": "",
+                                    "explanation": "Solution could not be extracted from batch response."
+                                })
                     else:
-                        # If JSON parsing completely fails, try to extract answer/explanation from raw text
-                        # Try multiple regex patterns
-                        answer_patterns = [
-                            r'"answer"\s*:\s*"([^"]+)"',
-                            r'"answer"\s*:\s*(\d+)',
-                            r'answer["\s]*[:=]\s*["\']?(\d+)',
-                            r'Answer["\s]*[:=]\s*["\']?(\d+)'
-                        ]
-                        explanation_patterns = [
-                            r'"explanation"\s*:\s*"([^"]+)"',
-                            r'"explanation"\s*:\s*"([^"]+)"',
-                            r'explanation["\s]*[:=]\s*["\']([^"\']+)'
-                        ]
-                        
-                        answer = ""
-                        explanation = ""
-                        
-                        for pattern in answer_patterns:
-                            match = re.search(pattern, response.text, re.IGNORECASE)
-                            if match:
-                                answer = match.group(1).strip()
-                                break
-                        
-                        for pattern in explanation_patterns:
-                            match = re.search(pattern, response.text, re.IGNORECASE | re.DOTALL)
-                            if match:
-                                explanation = match.group(1).strip()
-                                break
-                        
-                        # If still no answer/explanation, try to extract from structure
-                        if not answer:
-                            # Look for patterns like "Answer: 3" or "The answer is 3"
-                            ans_match = re.search(r'(?:answer|answer is|correct answer)[\s:]+(\d+)', response.text, re.IGNORECASE)
-                            if ans_match:
-                                answer = ans_match.group(1)
-                        
-                        if not explanation:
-                            # Try to find explanation paragraph
-                            exp_match = re.search(r'explanation[:\s]+(.*?)(?:\n|$|"|answer)', response.text, re.IGNORECASE | re.DOTALL)
-                            if exp_match:
-                                explanation = exp_match.group(1).strip()
-                            elif answer:
-                                # If we have answer but no explanation, create a placeholder
-                                explanation = "Solution calculated based on the given data."
-                        
-                        results.append({
-                            "question_number": pq['num'],
-                            "question_text": pq['text'],
-                            "options": pq.get('options', ''),
-                            "answer": answer,
-                            "explanation": explanation if explanation else "Solution calculated."
-                        })
+                        # If batch parsing fails, process each question individually as fallback
+                        for pq in batch:
+                            results.append({
+                                "question_number": pq['num'],
+                                "question_text": pq['text'],
+                                "options": pq.get('options', ''),
+                                "answer": "",
+                                "explanation": "Solution could not be calculated from batch."
+                            })
                 except Exception as e:
                     error_str = str(e)
                     # Check if it's a quota/rate limit error
                     if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
-                        print(f"Quota/Rate limit hit for question {pq['num']}. Waiting 30 seconds before retry...")
+                        print(f"Quota/Rate limit hit for batch starting at question {batch[0]['num']}. Waiting 30 seconds before retry...")
                         time.sleep(30)  # Wait 30 seconds for quota to reset
                         try:
                             # Retry once after waiting
                             response = model.generate_content(prompt)
                             raw_output = extract_json_block(response.text)
                             parsed = extract_inner_json(response.text)
-                            if parsed and isinstance(parsed, dict):
-                                result = {
-                                    "question_number": parsed.get("question_number", pq['num']),
-                                    "question_text": parsed.get("question_text", pq['text']),
-                                    "answer": parsed.get("answer", ""),
-                                    "explanation": parsed.get("explanation", "")
-                                }
-                                results.append(result)
+                            if parsed:
+                                if isinstance(parsed, dict):
+                                    parsed = [parsed]
+                                for i, pq in enumerate(batch):
+                                    if i < len(parsed):
+                                        pq_result = parsed[i]
+                                        result = {
+                                            "question_number": pq_result.get("question_number", pq['num']),
+                                            "question_text": pq_result.get("question_text", pq['text']),
+                                            "options": pq_result.get("options", pq.get('options', '')),
+                                            "answer": pq_result.get("answer", ""),
+                                            "explanation": pq_result.get("explanation", "")
+                                        }
+                                        results.append(result)
+                                    else:
+                                        results.append({
+                                            "question_number": pq['num'],
+                                            "question_text": pq['text'],
+                                            "options": pq.get('options', ''),
+                                            "answer": "",
+                                            "explanation": "Solution could not be calculated due to API quota limit."
+                                        })
                             else:
-                                # If retry still fails, save question without solution
+                                # If retry still fails, save questions without solution
+                                for pq in batch:
+                                    results.append({
+                                        "question_number": pq['num'],
+                                        "question_text": pq['text'],
+                                        "options": pq.get('options', ''),
+                                        "answer": "",
+                                        "explanation": "Solution could not be calculated due to API quota limit."
+                                    })
+                        except:
+                            # If retry fails, save questions without solution
+                            for pq in batch:
                                 results.append({
                                     "question_number": pq['num'],
                                     "question_text": pq['text'],
@@ -658,25 +662,17 @@ Return ONLY the JSON object:"""
                                     "answer": "",
                                     "explanation": "Solution could not be calculated due to API quota limit."
                                 })
-                        except:
-                            # If retry fails, save question without solution
+                    else:
+                        # Other errors - save with clean error message
+                        print(f"Error solving batch starting at question {batch[0]['num']}: {error_str[:100]}")
+                        for pq in batch:
                             results.append({
                                 "question_number": pq['num'],
                                 "question_text": pq['text'],
                                 "options": pq.get('options', ''),
                                 "answer": "",
-                                "explanation": "Solution could not be calculated due to API quota limit."
+                                "explanation": "Solution could not be calculated. Please try again later."
                             })
-                    else:
-                        # Other errors - save with clean error message
-                        print(f"Error solving question {pq['num']}: {error_str[:100]}")  # Only print first 100 chars
-                        results.append({
-                            "question_number": pq['num'],
-                            "question_text": pq['text'],
-                            "options": pq.get('options', ''),
-                            "answer": "",
-                            "explanation": "Solution could not be calculated. Please try again later."
-                        })
             continue  # Skip the main prompt processing below
         
         # If no question splits found, use the original approach but with enhanced cleaning
@@ -868,7 +864,7 @@ def translate_items(items, target_lang):
         # Add delay between requests to avoid rate limits
         # Free tier is 250 requests/day, so add delays to spread requests out
         if idx > 0:
-            time.sleep(2)  # Increased delay to 2 seconds between translations
+            time.sleep(1)  # Reduced delay to 1 second between translations
 
         # Include options in prompt if available
         options_section = ""
