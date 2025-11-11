@@ -89,6 +89,12 @@ MANDATORY REQUIREMENTS:
 - Keep questions concise and professionally written
 - Base questions strictly on the document content below
 
+CRITICAL:
+- You MUST use ONLY English letters A), B), C), D) for the option labels
+- You MUST use ONLY the English phrase "Answer: X" where X is A, B, C, or D
+- DO NOT translate the option markers or the word "Answer" into any other language
+- The question text and option text should be in {language}, but the labels must remain in English
+
 EXAMPLE FORMAT - COPY EXACTLY:
 1. What is 2+2?
 A) 3
@@ -103,6 +109,22 @@ B) Berlin
 C) Paris
 D) Madrid
 Answer: C
+
+EXAMPLE FOR HINDI:
+1. दो और दो का योग क्या है?
+A) 3
+B) 4
+C) 5
+D) 6
+Answer: B
+
+EXAMPLE FOR ODIA:
+1. ଦୁଇ ଏବଂ ଦୁଇର ଯୋଗଫଳ କ'ଣ?
+A) 3
+B) 4
+C) 5
+D) 6
+Answer: B
 
 Document content:
 {pdf_text[:10000]}
@@ -168,6 +190,14 @@ for seq in LOCAL_OPTION_SETS:
         if idx < len(OPTION_LETTERS):
             LOCAL_OPTION_MAP[char] = OPTION_LETTERS[idx]
 LOCAL_OPTION_KEYS = sorted(LOCAL_OPTION_MAP.keys(), key=len, reverse=True)
+OPTION_NORMALIZATION_MAP = {
+    'A': 'A', 'B': 'B', 'C': 'C', 'D': 'D',
+    '1': 'A', '2': 'B', '3': 'C', '4': 'D',
+    'अ': 'A', 'आ': 'B', 'इ': 'C', 'ई': 'D',
+    'କ': 'A', 'ଖ': 'B', 'ଗ': 'C', 'ଘ': 'D',
+    'ଅ': 'A', 'ଆ': 'B', 'ଇ': 'C', 'ଈ': 'D'
+}
+
 BULLET_PATTERN = r'^[\u2022\u25CF\u25AA\u25AB\u25CB\u25C9\-\–\—\•\●\·]+\s*'
 
 def normalize_unicode_digits(text):
@@ -185,51 +215,50 @@ def normalize_unicode_digits(text):
     return ''.join(chars)
 
 def normalize_number_str(num_str):
-    if num_str is None:
-        return ''
-    return normalize_unicode_digits(str(num_str))
-
-def map_option_marker(token, fallback_letter):
-    token = normalize_unicode_digits(token or '').strip()
-    token_clean = re.sub(r'[\s\(\)\[\]\{\}\.:\-]', '', token)
-    if not token_clean:
-        return fallback_letter
-    upper = token_clean.upper()
-    if upper in OPTION_LETTERS:
-        return upper
-    if token_clean in DIGIT_TO_LETTER:
-        return DIGIT_TO_LETTER[token_clean]
-    if upper in DIGIT_TO_LETTER:
-        return DIGIT_TO_LETTER[upper]
-    if token_clean in LOCAL_OPTION_MAP:
-        return LOCAL_OPTION_MAP[token_clean]
-    return fallback_letter
+    return normalize_unicode_digits(str(num_str or '')).strip()
 
 def normalize_answer_value(answer_fragment):
     if not answer_fragment:
         return None
-    fragment = normalize_unicode_digits(answer_fragment)
-    letter_match = re.search(r'\b([A-E])\b', fragment, re.IGNORECASE)
+    fragment = normalize_unicode_digits(answer_fragment).strip()
+    letter_match = re.search(r'\b([A-D])\b', fragment, re.IGNORECASE)
     if letter_match:
         return letter_match.group(1).upper()
-    digit_match = re.search(r'\b([0-9])\b', fragment)
+    digit_match = re.search(r'\b([1-4])\b', fragment)
     if digit_match:
-        value = digit_match.group(1)
-        mapped = DIGIT_TO_LETTER.get(value)
-        if mapped:
-            return mapped
-    for key in LOCAL_OPTION_KEYS:
+        digit = digit_match.group(1)
+        return OPTION_NORMALIZATION_MAP.get(digit)
+    for key, value in OPTION_NORMALIZATION_MAP.items():
         if key and key in fragment:
-            mapped = LOCAL_OPTION_MAP.get(key)
-            if mapped:
-                return mapped
+            return value
     fragment_compact = re.sub(r'[\s:]', '', fragment)
-    for key in LOCAL_OPTION_KEYS:
+    for key, value in OPTION_NORMALIZATION_MAP.items():
         if key and key in fragment_compact:
-            mapped = LOCAL_OPTION_MAP.get(key)
-            if mapped:
-                return mapped
+            return value
     return None
+
+def normalize_option_list(option_list):
+    if not option_list:
+        return []
+    normalized = []
+    for opt in option_list:
+        opt_str = str(opt or '').strip()
+        if not opt_str:
+            continue
+        if re.match(r'^[A-D]\)\s+', opt_str, re.IGNORECASE):
+            normalized.append(opt_str)
+            continue
+        opt_str = re.sub(BULLET_PATTERN, '', opt_str)
+        opt_match = re.match(r'^([^\)]+)\)\s*(.*)', opt_str)
+        if opt_match:
+            marker_raw = normalize_unicode_digits(opt_match.group(1)).strip()
+            body = opt_match.group(2).strip()
+            mapped = OPTION_NORMALIZATION_MAP.get(marker_raw.upper()) or OPTION_NORMALIZATION_MAP.get(marker_raw)
+            if mapped and body:
+                normalized.append(f"{mapped}) {body}")
+                continue
+        normalized.append(opt_str)
+    return normalized
 
 def clean_text_html(s):
     """Clean text for HTML display"""
@@ -274,44 +303,39 @@ def parse_mcq_text(text):
     text = re.sub(r'(Options?\s*[:：]\s*)([A-E]\)[^\n]+)', split_options_in_text, text, flags=re.IGNORECASE)
     
     # Step 2: Split concatenated options that appear anywhere (not just after "Options:")
-    # Match pattern: A)textB)textC)textD)text (anywhere in text)
     def split_concatenated_options(match):
         full_match = match.group(0)
-        parts = re.split(option_marker_pattern, full_match, flags=re.IGNORECASE)
+        parts = re.split(r'([A-D]\))', full_match, flags=re.IGNORECASE)
         result = []
         for i in range(1, len(parts), 2):
             if i + 1 < len(parts):
                 marker = parts[i]
-                text = parts[i + 1]
-                option_line = build_option_line(marker, text)
-                if option_line:
-                    result.append(option_line)
+                text = parts[i + 1].strip()
+                if text:
+                    result.append(f"{marker} {text}")
         return "\n".join(result) if result else full_match
-    
-    # Find and split any line that contains multiple option markers without newlines between them
-    # This handles cases like "A) 120%B) 135%C) 150%D) 100%" on a single line
+
     lines = text.split('\n')
     processed_lines = []
     for line in lines:
-        # Check if line contains multiple option markers (A), B), C), D) or 1), 2), etc.)
-        option_count = len(re.findall(option_marker_pattern, line, re.IGNORECASE))
-        if option_count >= 2:  # Multiple options in one line
-            parts = re.split(option_marker_pattern, line, flags=re.IGNORECASE)
+        line = line.strip()
+        option_count = len(re.findall(r'[A-D]\)', line, re.IGNORECASE))
+        if option_count >= 2:
+            parts = re.split(r'([A-D]\))', line, flags=re.IGNORECASE)
             split_parts = []
             for i in range(1, len(parts), 2):
                 if i + 1 < len(parts):
                     marker = parts[i]
-                    text_segment = parts[i + 1]
-                    option_line = build_option_line(marker, text_segment)
-                    if option_line:
-                        split_parts.append(option_line)
+                    text_segment = parts[i + 1].strip()
+                    if text_segment:
+                        split_parts.append(f"{marker} {text_segment}")
             if split_parts:
                 processed_lines.extend(split_parts)
             else:
                 processed_lines.append(line)
         else:
             processed_lines.append(line)
-    
+
     text = '\n'.join(processed_lines)
 
     def normalize_option_prefix(match):
@@ -424,10 +448,15 @@ def parse_mcq_text(text):
                     current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
                 current_q['options'] = normalize_option_list(current_q.get('options'))
                 questions.append(current_q)
+                if current_q.get('options'):
+                    print(f"DEBUG: Question {current_q['number']} has {len(current_q['options'])} options:")
+                    for idx_opt, opt_val in enumerate(current_q['options'], start=1):
+                        print(f"  Option {idx_opt}: '{opt_val}'")
+                if current_q.get('answer'):
+                    print(f"  Answer: '{current_q['answer']}'")
                 current_q = None
-            # Check if this is an English-labelled option first
-            elif re.match(r'^[A-D][\)\.:]\s*', line, re.IGNORECASE):
-                english_match = re.match(r'^([A-D])[\)\.:]\s*(.*)', line, re.IGNORECASE)
+            elif re.match(r'^[A-D]\)\s+', line, re.IGNORECASE):
+                english_match = re.match(r'^([A-D])\)\s+(.*)', line, re.IGNORECASE)
                 if english_match:
                     marker = english_match.group(1).upper()
                     opt_text = english_match.group(2).strip()
@@ -435,53 +464,11 @@ def parse_mcq_text(text):
                     if not current_q.get('options'):
                         current_q['options'] = []
                     current_q['options'].append(option_line)
-                    print(f"DEBUG: Found English option: '{option_line[:50]}'")
+                    print(f"DEBUG: Found CLEAN English option: '{option_line[:50]}'")
                     continue
-
-            # Check if this is an option (A), B), C), D) or 1), 2), 3), 4), 5))
-            # More flexible: allow spaces after marker, handle various formats
-            elif re.match(option_line_pattern, line, re.IGNORECASE):
-                split_options = re.split(option_marker_pattern, line, flags=re.IGNORECASE)
-                if len(split_options) > 3:  # Found multiple options in one line
-                    for i in range(1, len(split_options), 2):
-                        if i + 1 < len(split_options):
-                            opt_marker = split_options[i]
-                            opt_text = split_options[i + 1]
-                            option_line = build_option_line(opt_marker, opt_text)
-                            if option_line:
-                                if not current_q.get('options'):
-                                    current_q['options'] = []
-                                current_q['options'].append(option_line)
-                                print(f"DEBUG: Split concatenated option: '{line[:50]}' -> '{option_line[:30]}'")
-                else:
-                    option_match = re.match(r'^([A-E1-5][\)\.:])\s*(.*)', line, re.IGNORECASE)
-                    marker = option_match.group(1) if option_match else None
-                    opt_text = option_match.group(2) if option_match else line
-                    option_line = build_option_line(marker, opt_text)
-                    if option_line:
-                        if not current_q.get('options'):
-                            current_q['options'] = []
-                        current_q['options'].append(option_line)
-            elif re.search(option_marker_pattern, line, re.IGNORECASE):
-                option_parts = re.split(option_marker_pattern, line)
-                for i in range(1, len(option_parts), 2):
-                    if i < len(option_parts):
-                        opt_marker = option_parts[i]
-                        opt_text = option_parts[i + 1]
-                        option_line = build_option_line(opt_marker, opt_text)
-                        if option_line:
-                            if not current_q.get('options'):
-                                current_q['options'] = []
-                            current_q['options'].append(option_line)
-                if not re.match(option_line_pattern, line, re.IGNORECASE):
-                    current_q['parts'].append(line)
             else:
-                potential_option = try_extract_option_line(line, len(current_q.get('options', [])))
-                if potential_option:
-                    if not current_q.get('options'):
-                        current_q['options'] = []
-                    current_q['options'].append(potential_option)
-                    continue
+                if line:
+                    current_q['parts'].append(line)
 
     if current_q:
         if not current_q.get('number'):
@@ -492,51 +479,50 @@ def parse_mcq_text(text):
         # Try to extract options from content if not found separately
         if not current_q.get('options') or len(current_q['options']) == 0:
             content_text = current_q.get('content', '')
-            # Look for options in content - first try A), B), C), D)
-            options_in_content = re.findall(r'([A-E1-5][\)\.:])\s*([^\n<]+)', content_text, re.IGNORECASE)
+            options_in_content = re.findall(r'([A-D]\))\s*([^\n<]+)', content_text, re.IGNORECASE)
             if options_in_content and len(options_in_content) >= 2:
                 formatted_options = []
-                for marker, text_segment in options_in_content[:5]:
+                for marker, text_segment in options_in_content[:4]:
                     option_line = build_option_line(marker, text_segment)
                     if option_line:
                         formatted_options.append(option_line)
                 if formatted_options:
                     current_q['options'] = formatted_options
             else:
-                # Fallback: look for lines that start with just ")" - assign letters
-                # Remove HTML tags first to get plain text, replace <br> with newline
                 plain_text = re.sub(r'<br\s*/?>', '\n', content_text, flags=re.IGNORECASE)
                 plain_text = re.sub(r'<[^>]+>', ' ', plain_text)
-                # Split by newline and find lines starting with ")"
-                lines = plain_text.split('\n')
+                lines_inner = plain_text.split('\n')
                 just_paren_options = []
-                for line in lines:
-                    line = line.strip()
-                    if re.match(r'\)\s*[^\s)]', line):  # Line starts with ) followed by non-whitespace
-                        # Extract text after )
-                        opt_text = re.sub(r'^\)\s*', '', line).strip()
+                for line_inner in lines_inner:
+                    line_inner = line_inner.strip()
+                    if re.match(r'\)\s*[^\s)]', line_inner):
+                        opt_text = re.sub(r'^\)\s*', '', line_inner).strip()
                         if opt_text and len(opt_text) > 0:
                             just_paren_options.append(opt_text)
                             if len(just_paren_options) >= 4:
                                 break
-                
                 if just_paren_options and len(just_paren_options) >= 2:
-                    # Assign sequential letters A, B, C, D
                     option_letters = ['A', 'B', 'C', 'D']
-                    current_q['options'] = [f"{option_letters[i]}) {text.strip()}" 
+                    current_q['options'] = [f"{option_letters[i]}) {text.strip()}"
                                           for i, text in enumerate(just_paren_options[:4])]
                     print(f"DEBUG: Extracted {len(current_q['options'])} options from content fallback: {current_q['options']}")
         # Try to extract answer from content if not found separately
         if not current_q.get('answer'):
             content_text = current_q.get('content', '')
-            answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତర|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', content_text, re.IGNORECASE)
+            answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉత్తర|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', content_text, re.IGNORECASE)
             if answer_in_content:
                 ans_val = answer_in_content.group(1)
                 mapped = normalize_answer_value(ans_val)
                 current_q['answer'] = f"Answer: {mapped or ans_val}"
         current_q['options'] = normalize_option_list(current_q.get('options'))
         questions.append(current_q)
-    
+        if current_q.get('options'):
+            print(f"DEBUG: Question {current_q['number']} has {len(current_q['options'])} options:")
+            for idx_opt, opt_val in enumerate(current_q['options'], start=1):
+                print(f"  Option {idx_opt}: '{opt_val}'")
+        if current_q.get('answer'):
+            print(f"  Answer: '{current_q['answer']}'")
+
     # Debug: print what was parsed
     if questions:
         print(f"\n=== DEBUG: Parsed {len(questions)} questions ===")
@@ -550,33 +536,20 @@ def parse_mcq_text(text):
     
     return questions if questions else None
 
-option_marker_pattern = r'([A-E][\)\.:]|[1-5][\)\.:])'
-option_line_pattern = r'^[A-E1-5][\)\.:]\s*'
+option_marker_pattern = r'([A-D]\))'
+option_line_pattern = r'^[A-D]\)\s+'
 
 def format_option_marker(raw_marker):
     if not raw_marker:
         return None
-    marker = raw_marker.strip()
-    if not marker:
-        return None
-    letter_match = re.match(r'([A-E])', marker, re.IGNORECASE)
-    if letter_match:
-        return f"{letter_match.group(1).upper()})"
-    digit_val = None
-    for ch in marker:
-        try:
-            digit_val = unicodedata.digit(ch)
-            break
-        except (TypeError, ValueError):
-            continue
-    if digit_val is None:
-        number_match = re.match(r'([1-5])', marker)
-        if number_match:
-            digit_val = int(number_match.group(1))
-    if digit_val is not None:
-        if 1 <= digit_val <= 4:
-            return f"{['A','B','C','D'][digit_val-1]})"
-        return f"{digit_val})"
+    marker = normalize_unicode_digits(str(raw_marker)).strip()
+    marker_clean = re.sub(r'[\)\.:]', '', marker)
+    marker_upper = marker_clean.upper()
+    mapped = OPTION_NORMALIZATION_MAP.get(marker_upper) or OPTION_NORMALIZATION_MAP.get(marker_clean)
+    if mapped:
+        return f"{mapped})"
+    if re.match(r'^[A-D]$', marker_upper):
+        return f"{marker_upper})"
     return None
 
 def build_option_line(marker, text):
@@ -587,65 +560,6 @@ def build_option_line(marker, text):
     if normalized_marker:
         return f"{normalized_marker} {opt_text}"
     return opt_text
-
-def normalize_option_list(option_list):
-    if not option_list:
-        return []
-    normalized = []
-    for idx, opt in enumerate(option_list):
-        opt_str = str(opt or '').strip().replace('â€¢', '•')
-        if not opt_str:
-            continue
-        opt_str = re.sub(BULLET_PATTERN, '', opt_str).strip()
-        fallback_letter = OPTION_LETTERS[idx] if idx < len(OPTION_LETTERS) else OPTION_LETTERS[0]
-        marker = fallback_letter
-        body = opt_str
-        marker_candidate = None
-        body_candidate = None
-        marker_match = re.match(r'^\s*[\(\[\{]?([^\s\)\]\}\.:]{1,4})[\)\]\}\.:]\s*(.+)', opt_str)
-        if marker_match:
-            marker_candidate = marker_match.group(1)
-            body_candidate = marker_match.group(2)
-        else:
-            simple_match = re.match(r'^\s*([^\s]{1,4})\s+(.*)', opt_str)
-            if simple_match:
-                marker_candidate = simple_match.group(1)
-                body_candidate = simple_match.group(2)
-        if marker_candidate:
-            mapped = map_option_marker(marker_candidate, fallback_letter)
-            marker = mapped if mapped in OPTION_LETTERS else fallback_letter
-            if body_candidate and body_candidate.strip():
-                body = body_candidate.strip()
-        else:
-            stripped = re.sub(r'^[\)\.\-:]+\s*', '', opt_str)
-            if stripped:
-                body = stripped
-        if body:
-            normalized.append(f"{marker}) {body}")
-    return normalized
-
-def try_extract_option_line(line, existing_count):
-    if not line:
-        return None
-    line = line.replace('â€¢', '•')
-    stripped = re.sub(BULLET_PATTERN, '', line.strip()).strip()
-    if not stripped or re.match(r'^(Answer|उत्तर|ସମାଧାନ|ଉତ୍ତର|பதில்|ಉತ್ತರ)', stripped, re.IGNORECASE):
-        return None
-    fallback = OPTION_LETTERS[existing_count] if existing_count < len(OPTION_LETTERS) else OPTION_LETTERS[0]
-    marker_match = re.match(r'^[\(\[\{]?([^\s\)\]\}\.:]{1,4})[\)\]\}\.:]\s*(.+)', stripped)
-    if marker_match:
-        marker_candidate = marker_match.group(1)
-        body_candidate = marker_match.group(2).strip()
-        marker = map_option_marker(marker_candidate, fallback)
-        body = body_candidate
-    else:
-        marker = fallback
-        body = stripped
-    if not body:
-        return None
-    if marker not in OPTION_LETTERS:
-        marker = fallback
-    return f"{marker}) {body}"
 
 async def save_pdf_playwright(text, outpath, lang):
     """Save PDF using Playwright for better Indic font support"""
