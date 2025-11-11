@@ -157,12 +157,60 @@ def extract_pdf(input_pdf, output_json="extracted_data.json", output_image_folde
     print(f"Extraction complete. Saved to '{output_json}'")
     return all_pages_data
 
-# -------------------------
-# Solver (SymPy first, LLM fallback)
-# -------------------------
+
+def normalize_question_content(text):
+    """Normalize question text for consistent duplicate detection."""
+    if not text:
+        return ""
+    normalized = re.sub(r"\s+", " ", str(text).strip().lower())
+    patterns_to_remove = [
+        r"^question\s*\d+[\.:]\s*",
+        r"^q\s*\d+[\.:]\s*",
+        r"\s*\([^)]*\)\s*",
+        r"\s*\[[^\]]*\]\s*",
+    ]
+    for pattern in patterns_to_remove:
+        normalized = re.sub(pattern, " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+def is_duplicate_question(new_q_text, existing_questions, similarity_threshold=0.8):
+    """Check if the provided question text is a duplicate of existing questions."""
+    if not existing_questions or not new_q_text:
+        return False
+
+    new_q_normalized = normalize_question_content(new_q_text)
+    if not new_q_normalized:
+        return False
+
+    for existing_q in existing_questions:
+        existing_text = existing_q.get("text", "") or existing_q.get("question_text", "")
+        existing_normalized = normalize_question_content(existing_text)
+        if not existing_normalized:
+            continue
+
+        if new_q_normalized == existing_normalized:
+            return True
+
+        if (new_q_normalized in existing_normalized or existing_normalized in new_q_normalized) and len(new_q_normalized) > 25 and len(existing_normalized) > 25:
+            return True
+
+        new_words = set(new_q_normalized.split())
+        existing_words = set(existing_normalized.split())
+        if new_words and existing_words:
+            overlap = len(new_words.intersection(existing_words))
+            similarity = overlap / max(len(new_words), len(existing_words))
+            if similarity > similarity_threshold:
+                return True
+
+    return False
+
 def solve_pages(pages):
+    print(f"=== Starting to process {len(pages)} pages ===")
     results = []
+    processed_question_numbers = set()
     for page in tqdm(pages, desc="Solving pages"):
+        before_page_results = len(results)
         text = str(page.get("text", "")).strip()
         if not text:
             continue
@@ -200,6 +248,9 @@ Return only 2-line explanation text.
             try:
                 q_num_int = int(q_num_str)
                 if 1 <= q_num_int <= 999:
+                    if q_num_str in processed_question_numbers:
+                        print(f"DEBUG: Skipping already processed question {q_num_str}")
+                        continue
                     valid_questions.append(match)
             except ValueError:
                 continue
@@ -208,17 +259,49 @@ Return only 2-line explanation text.
 
         if len(valid_questions) > 0:
             page_questions = []
+            processed_text_positions = set()
             for i, match in enumerate(valid_questions):
                 q_num = match.group(1)
                 match_start = match.start()
 
+                if match_start in processed_text_positions:
+                    print(f"DEBUG: Skipping duplicate question {q_num} at position {match_start}")
+                    continue
+
                 if i + 1 < len(valid_questions):
                     next_match_start = valid_questions[i + 1].start()
-                    end_pos = min(next_match_start, len(text))
-                else:
-                    end_pos = len(text)
+                    current_text = text[match_start:next_match_start]
+                    question_end = None
 
+                    qmark_match = re.search(r'\?[^\?]*?(?=\d{1,3}\.\s|Answer\s*[:=]|$)', current_text, re.IGNORECASE)
+                    if qmark_match:
+                        question_end = match_start + qmark_match.end()
+                    else:
+                        option_match = re.search(r'(?:1\)|2\)|3\)|4\)|5\))', current_text)
+                        if option_match:
+                            question_end = match_start + option_match.start()
+                        else:
+                            question_end = next_match_start - 50
+
+                    if question_end and question_end > match_start:
+                        end_pos = min(max(question_end, match_start), len(text))
+                    else:
+                        end_pos = min(next_match_start, len(text))
+                else:
+                    current_text = text[match_start:]
+                    qmark_match = re.search(r'\?[^\?]*?(?=\d{1,3}\.\s|Answer\s*[:=]|$)', current_text, re.IGNORECASE)
+                    if qmark_match:
+                        end_pos = min(match_start + qmark_match.end(), len(text))
+                    else:
+                        end_pos = len(text)
+
+                end_pos = max(end_pos, match_start)
                 q_text = text[match_start:end_pos].strip()
+                processed_text_positions.add(match_start)
+
+                if is_duplicate_question(q_text, page_questions) or is_duplicate_question(q_text, results):
+                    print(f"DEBUG: Skipping duplicate content for question {q_num}")
+                    continue
 
                 cleaning_patterns = [
                     r"Sreedhar's\s+CCE",
@@ -293,6 +376,7 @@ Return only 2-line explanation text.
                 if len(q_text) < 15 and '?' not in q_text:
                     continue
 
+                processed_question_numbers.add(q_num)
                 page_questions.append({"num": q_num, "text": q_text, "options": options_text})
 
             print(f"Page {page['page']}: Processing {len(page_questions)} questions")
@@ -303,6 +387,22 @@ Return only 2-line explanation text.
 
                 for batch_start in range(0, len(page_questions), batch_size):
                     batch = page_questions[batch_start:batch_start + batch_size]
+
+                    batch_question_numbers = {pq['num'] for pq in batch}
+                    existing_numbers = {str(q.get('question_number', '')) for q in results if q.get('question_number')}
+                    duplicate_numbers = batch_question_numbers.intersection(existing_numbers)
+                    if duplicate_numbers:
+                        print(f"DEBUG: Skipping batch with duplicate question numbers: {duplicate_numbers}")
+                        continue
+
+                    batch_has_duplicates = False
+                    for pq in batch:
+                        if is_duplicate_question(pq['text'], results):
+                            print(f"DEBUG: Skipping batch due to content duplicate: Q{pq['num']}")
+                            batch_has_duplicates = True
+                            break
+                    if batch_has_duplicates:
+                        continue
 
                     if batch_start > 0:
                         time.sleep(0.5)
@@ -342,14 +442,30 @@ Return ONLY the JSON array:"""
                         except Exception:
                             parsed = extract_inner_json(raw_output)
                         if parsed and isinstance(parsed, list):
+                            existing_numbers = {str(r.get('question_number', '')) for r in results if r.get('question_number')}
+                            new_items = []
                             for item in parsed:
-                                item['question_number'] = str(item.get('question_number') or item.get('question_num') or '')
-                            results.extend(parsed)
+                                q_num = str(item.get('question_number') or item.get('question_num') or '')
+                                if not q_num:
+                                    q_num = str(item.get('num') or '')
+                                item['question_number'] = q_num
+                                if q_num and q_num in existing_numbers:
+                                    print(f"DEBUG: Skipping duplicate question {q_num} in batch results")
+                                    continue
+                                existing_numbers.add(q_num)
+                                new_items.append(item)
+                            if new_items:
+                                results.extend(new_items)
+                            else:
+                                print("DEBUG: All batch items were duplicates")
                         else:
                             print(f"Failed to parse model output on page {page['page']}:")
                             print(raw_output)
                     except Exception as e:
                         print(f"Error processing batch on page {page['page']}: {e}")
+
+        added_count = len(results) - before_page_results
+        print(f"Page {page['page']}: Added {added_count} questions, total results: {len(results)}")
 
     # Sort results by question_number to maintain sequence
     def get_qnum(q):
@@ -367,7 +483,30 @@ Return ONLY the JSON array:"""
             return 9999  # Put unnumbered items at the end
     
     results.sort(key=get_qnum)
-    
+
+    unique_results = []
+    seen_question_numbers = set()
+    seen_question_texts = set()
+    seen_combined_signatures = set()
+    for item in results:
+        q_text = (item.get("question_text") or "").strip().lower()
+        q_num = str(item.get("question_number", ""))
+        if not q_text or len(q_text) < 10:
+            continue
+        text_sig = q_text[:150]
+        combined_sig = f"{q_num}:{q_text[:100]}"
+        if (q_num and q_num in seen_question_numbers) or (text_sig in seen_question_texts) or (combined_sig in seen_combined_signatures):
+            print(f"DEBUG: Removing final duplicate - Q{q_num}")
+            continue
+        if q_num:
+            seen_question_numbers.add(q_num)
+        seen_question_texts.add(text_sig)
+        seen_combined_signatures.add(combined_sig)
+        unique_results.append(item)
+
+    print(f"Final duplicate removal: {len(results)} -> {len(unique_results)} questions")
+    results = unique_results
+
     # Save solved file
     os.makedirs("outputs", exist_ok=True)
     solved_path = os.path.join("outputs", "solved_extracted_data.json")
