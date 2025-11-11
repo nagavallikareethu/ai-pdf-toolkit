@@ -136,6 +136,15 @@ Now generate {n} MCQs following the format above EXACTLY. Remember:
     model = genai.GenerativeModel("gemini-2.5-pro")
     response = model.generate_content(prompt)
     text = response.text
+    print(f"\n=== RAW GEMINI OUTPUT ({language}) ===")
+    print(text)
+    print("=== END RAW OUTPUT ===\n")
+    try:
+        outfile = f"gemini_output_{language}.txt"
+        with open(outfile, "w", encoding="utf-8") as f:
+            f.write(text or "")
+    except Exception as e:
+        print(f"Warning: failed to save raw Gemini output: {e}")
     
     return text
 
@@ -178,18 +187,6 @@ SCRIPT_DIR = pathlib.Path(__file__).parent.resolve()
 FONTS_DIR = SCRIPT_DIR / "fonts"
 
 DIGIT_TO_LETTER = {'1': 'A', '2': 'B', '3': 'C', '4': 'D', '5': 'E'}
-OPTION_LETTERS = ['A', 'B', 'C', 'D', 'E']
-LOCAL_OPTION_SETS = [
-    ['अ', 'आ', 'इ', 'ई', 'उ'],
-    ['क', 'ख', 'ग', 'घ', 'ङ'],
-    ['ଅ', 'ଆ', 'ଇ', 'ଈ', 'ଉ'],
-]
-LOCAL_OPTION_MAP = {}
-for seq in LOCAL_OPTION_SETS:
-    for idx, char in enumerate(seq):
-        if idx < len(OPTION_LETTERS):
-            LOCAL_OPTION_MAP[char] = OPTION_LETTERS[idx]
-LOCAL_OPTION_KEYS = sorted(LOCAL_OPTION_MAP.keys(), key=len, reverse=True)
 OPTION_NORMALIZATION_MAP = {
     'A': 'A', 'B': 'B', 'C': 'C', 'D': 'D',
     '1': 'A', '2': 'B', '3': 'C', '4': 'D',
@@ -197,6 +194,7 @@ OPTION_NORMALIZATION_MAP = {
     'କ': 'A', 'ଖ': 'B', 'ଗ': 'C', 'ଘ': 'D',
     'ଅ': 'A', 'ଆ': 'B', 'ଇ': 'C', 'ଈ': 'D'
 }
+OPTION_LETTERS = ['A', 'B', 'C', 'D', 'E']
 
 BULLET_PATTERN = r'^[\u2022\u25CF\u25AA\u25AB\u25CB\u25C9\-\–\—\•\●\·]+\s*'
 
@@ -305,7 +303,7 @@ def parse_mcq_text(text):
     # Step 2: Split concatenated options that appear anywhere (not just after "Options:")
     def split_concatenated_options(match):
         full_match = match.group(0)
-        parts = re.split(r'([A-D]\))', full_match, flags=re.IGNORECASE)
+        parts = re.split(r'(([A-D]|[1-4])\))', full_match, flags=re.IGNORECASE)
         result = []
         for i in range(1, len(parts), 2):
             if i + 1 < len(parts):
@@ -319,9 +317,9 @@ def parse_mcq_text(text):
     processed_lines = []
     for line in lines:
         line = line.strip()
-        option_count = len(re.findall(r'[A-D]\)', line, re.IGNORECASE))
+        option_count = len(re.findall(r'([A-D]|[1-4])\)', line, re.IGNORECASE))
         if option_count >= 2:
-            parts = re.split(r'([A-D]\))', line, flags=re.IGNORECASE)
+            parts = re.split(r'(([A-D]|[1-4])\))', line, flags=re.IGNORECASE)
             split_parts = []
             for i in range(1, len(parts), 2):
                 if i + 1 < len(parts):
@@ -364,6 +362,7 @@ def parse_mcq_text(text):
         line = line.strip()
         if not line:
             continue
+        print(f"DEBUG: Processing line: '{line[:50]}'")
             
         # Check if this is a question number
         match = re.match(r'^(?:Q\s*)?(\d+)[\.\)]\s*(.*)', line, re.IGNORECASE)
@@ -371,6 +370,7 @@ def parse_mcq_text(text):
             match = re.match(r'^(?:Question|Que|Qn)\s*(\d+)\s*[:\-]?\s*(.*)', line, re.IGNORECASE)
         if match:
             q_number = normalize_number_str(match.group(1))
+            print(f"DEBUG: Found question {q_number}")
             question_body = match.group(2)
             if current_q:
                 questions.append(current_q)
@@ -401,6 +401,7 @@ def parse_mcq_text(text):
             # Check if this line starts with "Options:" followed by concatenated options
             # Handle "Options:A) 120%B) 135%C) 150%D) 100%" format
             if re.match(r'^Options?\s*[:：]\s*', line, re.IGNORECASE):
+                print("DEBUG: Found 'Options:' prefix")
                 options_part = re.sub(r'^Options?\s*[:：]\s*', '', line, flags=re.IGNORECASE).strip()
                 split_options = re.split(option_marker_pattern, options_part, flags=re.IGNORECASE)
                 if len(split_options) > 3:  # Found multiple options
@@ -424,37 +425,26 @@ def parse_mcq_text(text):
             # English: "Answer:", "Answer: B", "Answer:B"
             # Hindi: "उत्तर:", "उत्तर: B"
             # Telugu: "సమాధానం:", etc.
-            elif (line.startswith('Answer:') or 
-                re.match(r'^(Answer|उत्तर|సమాధానం|ଉତ్తର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9\(\)\s]+)', line, re.IGNORECASE)):
-                answer_capture = re.search(r'Answer\s*[:=]\s*(.+)', line, re.IGNORECASE)
-                if not answer_capture:
-                    answer_capture = re.search(r'(?:उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', line, re.IGNORECASE)
-                normalized_answer = None
-                if answer_capture:
-                    answer_fragment = answer_capture.group(1).strip()
-                    answer_fragment = re.sub(r'^[\-\s]+', '', answer_fragment)
-                    normalized_answer = normalize_answer_value(answer_fragment)
-                if normalized_answer:
-                    current_q['answer'] = f"Answer: {normalized_answer}"
-                elif answer_capture:
-                    current_q['answer'] = f"Answer: {answer_capture.group(1).strip()}"
-                else:
-                    fallback_match = re.search(r'[:=]\s*([A-Z0-9]+)', line)
-                    if fallback_match:
-                        current_q['answer'] = f"Answer: {fallback_match.group(1)}"
-                    else:
-                        current_q['answer'] = "Answer: " + line
-                if current_q['parts']:
-                    current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
-                current_q['options'] = normalize_option_list(current_q.get('options'))
-                questions.append(current_q)
-                if current_q.get('options'):
-                    print(f"DEBUG: Question {current_q['number']} has {len(current_q['options'])} options:")
-                    for idx_opt, opt_val in enumerate(current_q['options'], start=1):
-                        print(f"  Option {idx_opt}: '{opt_val}'")
-                if current_q.get('answer'):
-                    print(f"  Answer: '{current_q['answer']}'")
-                current_q = None
+            elif (re.match(r'^Answer:\s*[A-D]\s*$', line, re.IGNORECASE) or 
+                  re.match(r'^Answer:\s*[A-D][^A-Za-z]*$', line, re.IGNORECASE)):
+                answer_match = re.match(r'^Answer:\s*([A-D])', line, re.IGNORECASE)
+                if answer_match:
+                    answer_val = answer_match.group(1).upper()
+                    current_q['answer'] = f"Answer: {answer_val}"
+                    print(f"DEBUG: Found clean answer: {current_q['answer']}")
+                    if current_q['parts']:
+                        current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
+                    current_q['options'] = normalize_option_list(current_q.get('options', []))
+                    questions.append(current_q)
+                    if current_q.get('options'):
+                        print(f"DEBUG: Question {current_q['number']} has {len(current_q['options'])} options:")
+                        for idx_opt, opt_val in enumerate(current_q['options'], start=1):
+                            print(f"  Option {idx_opt}: '{opt_val}'")
+                    if current_q.get('answer'):
+                        print(f"  Answer: '{current_q['answer']}'")
+                    current_q = None
+                    continue
+            # Check if this is an English-labelled option first - PRIORITIZE THIS
             elif re.match(r'^[A-D]\)\s+', line, re.IGNORECASE):
                 english_match = re.match(r'^([A-D])\)\s+(.*)', line, re.IGNORECASE)
                 if english_match:
@@ -466,7 +456,27 @@ def parse_mcq_text(text):
                     current_q['options'].append(option_line)
                     print(f"DEBUG: Found CLEAN English option: '{option_line[:50]}'")
                     continue
+            # Check if this is any other type of option marker
+            elif re.match(option_line_pattern, line, re.IGNORECASE):
+                option_match = re.match(r'^([A-E1-5][\)\.:])\s*(.*)', line, re.IGNORECASE)
+                if option_match:
+                    marker = option_match.group(1)
+                    opt_text = option_match.group(2)
+                    option_line = build_option_line(marker, opt_text)
+                    if option_line:
+                        if not current_q.get('options'):
+                            current_q['options'] = []
+                        current_q['options'].append(option_line)
+                        print(f"DEBUG: Found other option: '{option_line[:50]}'")
+                    continue
             else:
+                potential_option = try_extract_option_line(line, len(current_q.get('options', [])))
+                if potential_option:
+                    if not current_q.get('options'):
+                        current_q['options'] = []
+                    current_q['options'].append(potential_option)
+                    print(f"DEBUG: Extracted fallback option: '{potential_option[:50]}'")
+                    continue
                 if line:
                     current_q['parts'].append(line)
 
@@ -536,8 +546,8 @@ def parse_mcq_text(text):
     
     return questions if questions else None
 
-option_marker_pattern = r'([A-D]\))'
-option_line_pattern = r'^[A-D]\)\s+'
+option_marker_pattern = r'([A-D]|[1-4])\)'
+option_line_pattern = r'^[A-D1-4][\)\.:]\s+'
 
 def format_option_marker(raw_marker):
     if not raw_marker:
@@ -560,6 +570,19 @@ def build_option_line(marker, text):
     if normalized_marker:
         return f"{normalized_marker} {opt_text}"
     return opt_text
+
+def try_extract_option_line(line, existing_count):
+    """Try to extract option from a line that doesn't match standard patterns"""
+    if not line:
+        return None
+    line = line.replace('â€¢', '•')
+    stripped = re.sub(BULLET_PATTERN, '', line.strip()).strip()
+    if not stripped or re.match(r'^(Answer|उत्तर|ସମାଧାନ|ଉତ୍ତର|பதில்|ಉತ್ತರ)', stripped, re.IGNORECASE):
+        return None
+    if len(stripped) > 2 and not re.match(r'^\d+\.', stripped):
+        fallback = OPTION_LETTERS[existing_count] if existing_count < len(OPTION_LETTERS) else OPTION_LETTERS[0]
+        return f"{fallback}) {stripped}"
+    return None
 
 async def save_pdf_playwright(text, outpath, lang):
     """Save PDF using Playwright for better Indic font support"""
