@@ -174,7 +174,7 @@ def normalize_question_content(text):
     normalized = re.sub(r"\s+", " ", normalized).strip()
     return normalized
 
-def is_duplicate_question(new_q_text, existing_questions, similarity_threshold=0.8):
+def is_duplicate_question(new_q_text, existing_questions, similarity_threshold=0.9):
     """Check if the provided question text is a duplicate of existing questions."""
     if not existing_questions or not new_q_text:
         return False
@@ -207,8 +207,15 @@ def is_duplicate_question(new_q_text, existing_questions, similarity_threshold=0
 
 def solve_pages(pages):
     print(f"=== Starting to process {len(pages)} pages ===")
+    os.makedirs("outputs", exist_ok=True)
+    debug_text_path = os.path.join("outputs", "debug_extracted_text.txt")
+    with open(debug_text_path, "w", encoding="utf-8") as debug_file:
+        for idx, page in enumerate(pages):
+            debug_file.write(f"\n{'=' * 50}\nPAGE {idx + 1}\n{'=' * 50}\n")
+            debug_file.write(str(page.get("text", ""))[:2000])
+    print(f"Debug: Raw text saved to {debug_text_path}")
     results = []
-    processed_question_numbers = set()
+    processed_question_keys = set()
     for page in tqdm(pages, desc="Solving pages"):
         before_page_results = len(results)
         text = str(page.get("text", "")).strip()
@@ -234,24 +241,42 @@ Return only 2-line explanation text.
                 "question_text": text,
                 "answer": str(sympy_solution),
                 "explanation": explanation,
-                "method": "sympy"
+                "method": "sympy",
+                "page": page['page']
             })
             continue
 
         # 2) Fallback to LLM for MCQs / textual questions
-        # Extract ALL numbered questions without filtering by range
-        question_matches = list(re.finditer(r'\b(\d{1,3})\.\s+', text))
+        question_patterns = [
+            r'\b(\d{1,3})\.\s+',
+            r'\b(\d{1,3})\)\s+',
+            r'\bQ\.?\s*(\d{1,3})\s*[\.:\)]\s*',
+            r'\bQuestion\s*(\d{1,3})\s*[\.:\)]\s*',
+        ]
 
+        all_question_matches = []
+        for pattern in question_patterns:
+            matches = list(re.finditer(pattern, text))
+            all_question_matches.extend(matches)
+
+        all_question_matches.sort(key=lambda x: x.start())
         valid_questions = []
-        for match in question_matches:
+        seen_positions = set()
+
+        for match in all_question_matches:
             q_num_str = match.group(1)
+            position = match.start()
+            if position in seen_positions:
+                continue
             try:
                 q_num_int = int(q_num_str)
                 if 1 <= q_num_int <= 999:
-                    if q_num_str in processed_question_numbers:
-                        print(f"DEBUG: Skipping already processed question {q_num_str}")
+                    key = (page['page'], q_num_str)
+                    if key in processed_question_keys:
+                        print(f"DEBUG: Skipping already processed question {q_num_str} on page {page['page']}")
                         continue
                     valid_questions.append(match)
+                    seen_positions.add(position)
             except ValueError:
                 continue
 
@@ -270,10 +295,11 @@ Return only 2-line explanation text.
 
                 if i + 1 < len(valid_questions):
                     next_match_start = valid_questions[i + 1].start()
-                    current_text = text[match_start:next_match_start]
+                    max_span_end = min(match_start + 2000, len(text))
+                    current_text = text[match_start:min(next_match_start, max_span_end)]
                     question_end = None
 
-                    qmark_match = re.search(r'\?[^\?]*?(?=\d{1,3}\.\s|Answer\s*[:=]|$)', current_text, re.IGNORECASE)
+                    qmark_match = re.search(r'\?[^\?]*?(?=\d{1,3}[\.\)]\s|Answer\s*[:=]|$)', current_text, re.IGNORECASE)
                     if qmark_match:
                         question_end = match_start + qmark_match.end()
                     else:
@@ -281,19 +307,20 @@ Return only 2-line explanation text.
                         if option_match:
                             question_end = match_start + option_match.start()
                         else:
-                            question_end = next_match_start - 50
+                            question_end = max(match_start, min(next_match_start - 50, max_span_end))
 
                     if question_end and question_end > match_start:
-                        end_pos = min(max(question_end, match_start), len(text))
+                        end_pos = min(max(question_end, match_start), max_span_end)
                     else:
-                        end_pos = min(next_match_start, len(text))
+                        end_pos = min(next_match_start, max_span_end)
                 else:
-                    current_text = text[match_start:]
-                    qmark_match = re.search(r'\?[^\?]*?(?=\d{1,3}\.\s|Answer\s*[:=]|$)', current_text, re.IGNORECASE)
+                    max_span_end = min(match_start + 2000, len(text))
+                    current_text = text[match_start:max_span_end]
+                    qmark_match = re.search(r'\?[^\?]*?(?=\d{1,3}[\.\)]\s|Answer\s*[:=]|$)', current_text, re.IGNORECASE)
                     if qmark_match:
-                        end_pos = min(match_start + qmark_match.end(), len(text))
+                        end_pos = min(match_start + qmark_match.end(), max_span_end)
                     else:
-                        end_pos = len(text)
+                        end_pos = max_span_end
 
                 end_pos = max(end_pos, match_start)
                 q_text = text[match_start:end_pos].strip()
@@ -304,23 +331,17 @@ Return only 2-line explanation text.
                     continue
 
                 cleaning_patterns = [
-                    r"Sreedhar's\s+CCE",
-                    r'SBI\s+CLERK',
-                    r'LIC\s+Asst\.',
-                    r'PRELIMS\s+MT',
-                    r'NIACL\s+Asst\.',
-                    r'TIER-I',
-                    r'NUMERICAL\s+ABILITY',
-                    r'Directions\s*\([^)]+\)',
-                    r'Study\s+the\s+data\s+carefully',
-                    r'answer\s+the\s+following\s+questions',
-                    r'The\s+Bar-chart\s+shows',
-                    r'Years\s+in\s+Lakhs',
-                    r'MODEL\s+TEST',
+                    r"Sreedhar's\s+CCE.*?(?=\d|$)",
+                    r'SBI\s+CLERK.*?(?=\d|$)',
+                    r'LIC\s+Asst\..*?(?=\d|$)',
+                    r'PRELIMS\s+MT.*?(?=\d|$)',
+                    r'NIACL\s+Asst\..*?(?=\d|$)',
+                    r'TIER-I.*?(?=\d|$)',
+                    r'NUMERICAL\s+ABILITY.*?(?=\d|$)',
                 ]
 
                 for pattern in cleaning_patterns:
-                    q_text = re.sub(pattern, '', q_text, flags=re.IGNORECASE)
+                    q_text = re.sub(pattern, '', q_text, flags=re.IGNORECASE | re.DOTALL)
 
                 q_text = re.sub(r'\s+', ' ', q_text).strip()
 
@@ -330,31 +351,32 @@ Return only 2-line explanation text.
                 options_text = ""
                 full_text_segment = text[match_start:end_pos]
 
-                option_match = re.search(r'1\)\s+([^0-9]+?)\s+2\)\s+([^0-9]+?)(?:\s+3\)\s+([^0-9]+?))?(?:\s+4\)\s+([^0-9]+?))?(?:\s+5\)\s+([^0-9]+?))?', full_text_segment, re.IGNORECASE)
-
+                option_match = re.search(r'1\)\s*([^\n]+?)\s+2\)\s*([^\n]+?)(?:\s+3\)\s*([^\n]+?))?(?:\s+4\)\s*([^\n]+?))?(?:\s+5\)\s*([^\n]+?))?', q_text)
                 if option_match:
                     options_parts = []
-                    for idx in range(1, (option_match.lastindex or 0) + 1):
-                        if option_match.group(idx):
-                            opt_text = option_match.group(idx).strip()
-                            opt_text = re.sub(r'^\d+\)\s*', '', opt_text)
+                    for idx in range(1, 6):
+                        captured = option_match.group(idx)
+                        if captured:
+                            opt_text = captured.strip()
                             options_parts.append(f"{idx}) {opt_text}")
                     if options_parts:
-                        options_text = " ".join(options_parts)
-                else:
-                    option_lines = re.findall(r'\)\s*([^\n\d\)]+)', full_text_segment, re.IGNORECASE)
-                    if len(option_lines) >= 2:
+                        options_text = " | ".join(options_parts)
+
+                if not options_text:
+                    letter_option_match = re.findall(r'([A-E]\)\s*[^\n]+)', q_text)
+                    if len(letter_option_match) >= 2:
+                        options_text = " ".join([opt.strip() for opt in letter_option_match])
+
+                if not options_text:
+                    paren_options = re.findall(r'\)\s*([^\n\d\)]+)', q_text)
+                    if len(paren_options) >= 2:
                         options_parts = []
-                        for idx, opt_line in enumerate(option_lines[:5], start=1):
-                            opt_clean = opt_line.strip()
+                        for idx, opt in enumerate(paren_options[:5], 1):
+                            opt_clean = opt.strip()
                             if opt_clean:
                                 options_parts.append(f"{idx}) {opt_clean}")
                         if options_parts:
-                            options_text = " ".join(options_parts)
-                    else:
-                        option_pattern = re.findall(r'([1-5]\)\s*[^\n]+)', full_text_segment, re.IGNORECASE)
-                        if len(option_pattern) >= 2:
-                            options_text = " ".join([opt.strip() for opt in option_pattern[:5]])
+                            options_text = " | ".join(options_parts)
 
                 if options_text:
                     options_text = re.sub(r"Sreedhar's\s+CCE[^1-5]*", '', options_text, flags=re.IGNORECASE)
@@ -373,17 +395,19 @@ Return only 2-line explanation text.
                 if is_data_description and '?' not in q_text:
                     continue
 
-                if len(q_text) < 15 and '?' not in q_text:
+                is_very_short = len(q_text) < 25 and '?' not in q_text
+                is_likely_header = re.search(r'^(Class|Total|Ratio|Number|Students|Group)[^?]*$', q_text, re.IGNORECASE) and '?' not in q_text
+                if is_very_short and is_likely_header:
                     continue
 
-                processed_question_numbers.add(q_num)
-                page_questions.append({"num": q_num, "text": q_text, "options": options_text})
+                processed_question_keys.add((page['page'], q_num))
+                page_questions.append({"num": q_num, "text": q_text, "options": options_text, "page": page['page']})
 
-            print(f"Page {page['page']}: Processing {len(page_questions)} questions")
+            print(f"Page {page['page']}: Processing {len(page_questions)} questions after filtering")
 
             if page_questions:
-                page_context = text[:2000]
-                batch_size = 5
+                context_snippet = text[:1500]
+                batch_size = 3
 
                 for batch_start in range(0, len(page_questions), batch_size):
                     batch = page_questions[batch_start:batch_start + batch_size]
@@ -405,64 +429,102 @@ Return only 2-line explanation text.
                         continue
 
                     if batch_start > 0:
-                        time.sleep(0.5)
+                        time.sleep(1)
 
                     questions_text = ""
                     for pq in batch:
-                        options_section = ""
-                        if pq.get('options'):
-                            options_section = f"\nOPTIONS: {pq['options']}"
-                        questions_text += f"\n\nQUESTION {pq['num']}:\n{pq['text']}{options_section}\n"
+                        options_section = f"\nOPTIONS: {pq['options']}" if pq.get('options') else ""
+                        questions_text += f"\n\nQUESTION {pq['num']} (Page {pq['page']}):\n{pq['text']}{options_section}\n"
 
                     prompt = f"""You are an expert exam solver. Solve these {len(batch)} questions completely.
 
-PAGE CONTEXT (may contain chart/table data):
-{page_context}
+PAGE CONTEXT:
+{context_snippet}
 {questions_text}
 
 IMPORTANT:
-1. Use the page context above if the questions reference data, charts, or tables
-2. If a question appears incomplete, try to solve it with available information
-3. Provide the correct answer option (1, 2, 3, 4, or 5) based on the options provided
-4. Provide a complete 2-3 line explanation showing your calculation or reasoning
+1. Solve each question completely and provide the correct answer
+2. If options are provided, choose from them (1, 2, 3, 4, or 5)
+3. If no options, provide the calculated or descriptive answer
+4. Give a clear 2-3 line explanation showing your reasoning
 
-Return ONLY a JSON array (no markdown, no code blocks). Start with [ and end with ]:
+Return ONLY a JSON array. Format exactly:
 [
-  {{"question_number": "31", "question_text": "...", "options": "...", "answer": "1", "explanation": "..."}},
-  {{"question_number": "32", "question_text": "...", "options": "...", "answer": "2", "explanation": "..."}}
+  {{
+    "question_number": "31",
+    "question_text": "full question text here",
+    "options": "1) opt1 2) opt2 3) opt3 4) opt4",
+    "answer": "2",
+    "explanation": "step by step explanation here"
+  }}
 ]
 
 Return ONLY the JSON array:"""
+
                     try:
                         response = model.generate_content(prompt)
-                        raw_output = extract_json_block(response.text)
+                        raw_output = (response.text or "").strip()
+
                         parsed = None
                         try:
                             parsed = json.loads(raw_output)
-                        except Exception:
-                            parsed = extract_inner_json(raw_output)
+                        except json.JSONDecodeError:
+                            json_match = re.search(r'\[\s*\{.*?\}\s*\]', raw_output, re.DOTALL)
+                            if json_match:
+                                try:
+                                    parsed = json.loads(json_match.group(0))
+                                except json.JSONDecodeError:
+                                    parsed = None
+
                         if parsed and isinstance(parsed, list):
                             existing_numbers = {str(r.get('question_number', '')) for r in results if r.get('question_number')}
                             new_items = []
-                            for item in parsed:
-                                q_num = str(item.get('question_number') or item.get('question_num') or '')
-                                if not q_num:
-                                    q_num = str(item.get('num') or '')
+                            for idx_item, item in enumerate(parsed):
+                                if idx_item >= len(batch):
+                                    break
+
+                                q_num = str(item.get('question_number') or item.get('question_num') or batch[idx_item]['num'])
                                 item['question_number'] = q_num
-                                if q_num and q_num in existing_numbers:
+                                item['page'] = batch[idx_item].get('page')
+
+                                if q_num in existing_numbers:
                                     print(f"DEBUG: Skipping duplicate question {q_num} in batch results")
                                     continue
+
                                 existing_numbers.add(q_num)
                                 new_items.append(item)
                             if new_items:
                                 results.extend(new_items)
+                                print(f"DEBUG: Added {len(new_items)} questions from batch")
                             else:
-                                print("DEBUG: All batch items were duplicates")
+                                print("DEBUG: All batch items were duplicates or failed processing")
                         else:
-                            print(f"Failed to parse model output on page {page['page']}:")
-                            print(raw_output)
+                            print(f"DEBUG: Failed to parse batch output for questions {[pq['num'] for pq in batch]}")
+                            print(f"Raw output: {raw_output[:500]}...")
+                            manual_results = []
+                            for i, pq in enumerate(batch):
+                                manual_results.append({
+                                    "question_number": pq['num'],
+                                    "question_text": pq['text'],
+                                    "options": pq.get('options', ''),
+                                    "answer": "ERROR: Manual fallback",
+                                    "explanation": "Used manual fallback due to parsing issues",
+                                    "page": pq.get('page')
+                                })
+                            results.extend(manual_results)
                     except Exception as e:
                         print(f"Error processing batch on page {page['page']}: {e}")
+                        manual_results = []
+                        for i, pq in enumerate(batch):
+                            manual_results.append({
+                                "question_number": pq['num'],
+                                "question_text": pq['text'],
+                                "options": pq.get('options', ''),
+                                "answer": "ERROR: Processing failed",
+                                "explanation": f"Failed to process: {str(e)}",
+                                "page": pq.get('page')
+                            })
+                        results.extend(manual_results)
 
         added_count = len(results) - before_page_results
         print(f"Page {page['page']}: Added {added_count} questions, total results: {len(results)}")
@@ -485,35 +547,34 @@ Return ONLY the JSON array:"""
     results.sort(key=get_qnum)
 
     unique_results = []
-    seen_question_numbers = set()
-    seen_question_texts = set()
-    seen_combined_signatures = set()
+    seen_signatures = set()
+
     for item in results:
-        q_text = (item.get("question_text") or "").strip().lower()
+        q_text = (item.get("question_text") or "").strip()
         q_num = str(item.get("question_number", ""))
-        if not q_text or len(q_text) < 10:
+        q_page = str(item.get("page", ""))
+
+        if not q_text:
             continue
-        text_sig = q_text[:150]
-        combined_sig = f"{q_num}:{q_text[:100]}"
-        if (q_num and q_num in seen_question_numbers) or (text_sig in seen_question_texts) or (combined_sig in seen_combined_signatures):
-            print(f"DEBUG: Removing final duplicate - Q{q_num}")
+
+        signature = f"{q_page}:{q_num}:{q_text[:80]}"
+
+        if signature in seen_signatures:
+            print(f"DEBUG: Removing exact duplicate - Q{q_num} (Page {q_page})")
             continue
-        if q_num:
-            seen_question_numbers.add(q_num)
-        seen_question_texts.add(text_sig)
-        seen_combined_signatures.add(combined_sig)
+
+        seen_signatures.add(signature)
         unique_results.append(item)
 
-    print(f"Final duplicate removal: {len(results)} -> {len(unique_results)} questions")
-    results = unique_results
+    print(f"Final: {len(results)} -> {len(unique_results)} questions after gentle deduplication")
 
-    # Save solved file
     os.makedirs("outputs", exist_ok=True)
     solved_path = os.path.join("outputs", "solved_extracted_data.json")
     with open(solved_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
-    print(f"Solving complete. Saved to '{solved_path}'")
-    return results
+        json.dump(unique_results, f, ensure_ascii=False, indent=2)
+
+    print(f"Solving complete. Saved {len(unique_results)} questions to '{solved_path}'")
+    return unique_results
 
 # -------------------------
 # Translation
