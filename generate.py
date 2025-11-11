@@ -52,6 +52,26 @@ ADDITIONAL TOPIC REQUIREMENT:
 - Focus the questions strictly on the topic: "{topic}".
 - Prefer PDF content that relates to this topic. If the PDF has limited coverage, craft questions that are still consistent with the document's style while centering the topic."""
 
+    hindi_analogy_example = ""
+    if language.lower() == "hindi":
+        hindi_analogy_example = """
+
+SPECIFIC EXAMPLE FOR ANALOGY QUESTIONS IN HINDI:
+1. पुस्तक : लेखक :: प्रतिमा : ?
+A) राजमिस्त्री
+B) मूर्तिकार  
+C) बढ़ई
+D) चित्रकार
+Answer: B
+
+2. डॉक्टर : स्टेथोस्कोप :: शिक्षक : ?
+A) पुस्तक
+B) टेबल
+C) कंप्यूटर
+D) कक्षा
+Answer: A
+"""
+
     prompt = f"""You are an expert exam question generator. Read the following document carefully and generate exactly {n} NEW MCQs.{topic_instruction}
 
 CRITICAL FORMATTING RULES - FOLLOW EXACTLY:
@@ -116,7 +136,7 @@ A) 3
 B) 4
 C) 5
 D) 6
-Answer: B
+Answer: B{hindi_analogy_example}
 
 EXAMPLE FOR ODIA:
 1. ଦୁଇ ଏବଂ ଦୁଇର ଯୋଗଫଳ କ'ଣ?
@@ -143,6 +163,7 @@ Now generate {n} MCQs following the format above EXACTLY. Remember:
         outfile = f"gemini_output_{language}.txt"
         with open(outfile, "w", encoding="utf-8") as f:
             f.write(text or "")
+        print(f"Saved raw output to: {outfile}")
     except Exception as e:
         print(f"Warning: failed to save raw Gemini output: {e}")
     
@@ -273,6 +294,8 @@ def parse_mcq_text(text):
     print("=== END DEBUG ===\n")
     
     text = normalize_unicode_digits(text)
+
+    text = re.sub(r'(\d+)\.\s*([^:?]+)\s*:\s*([^:?]+)\s*::\s*([^:?]+)\s*:\s*\?', r'\1. \2 : \3 :: \4 : ?', text)
 
     # Try to add line breaks where questions start
     text = re.sub(r'(\d+)\.', r'\n\1.', text)
