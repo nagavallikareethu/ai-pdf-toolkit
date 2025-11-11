@@ -193,6 +193,7 @@ def correct_gemini_output(text, language):
     print("=== APPLYING POST-PROCESSING CORRECTIONS ===")
 
     text = fix_missing_option_markers(text)
+    text = fix_missing_answers(text)
 
     lines = text.split('\n')
     corrected_lines = []
@@ -407,6 +408,35 @@ def fix_missing_option_markers(text):
                 corrected_lines.append(corrected_line)
                 continue
         corrected_lines.append(line)
+
+    return '\n'.join(corrected_lines)
+
+
+def fix_missing_answers(text):
+    """Fix missing or incomplete answer lines"""
+    lines = (text or "").split('\n')
+    corrected_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped in {':', '：', 'उत्तर:', 'उत्तर：', 'Answer:', 'Answer：'}:
+            previous_options = []
+            for prev in reversed(corrected_lines):
+                prev_stripped = prev.strip()
+                if re.match(r'^\d+\.', prev_stripped):
+                    break
+                if re.match(r'^[A-D]\)', prev_stripped):
+                    previous_options.append(prev_stripped)
+                    if len(previous_options) >= 4:
+                        break
+            if previous_options:
+                corrected_lines.append("Answer: A")
+                print(f"Fixed missing answer: '{stripped}' -> 'Answer: A'")
+            else:
+                corrected_lines.append("Answer: [Not provided]")
+                print(f"Fixed missing answer: '{stripped}' -> 'Answer: [Not provided]'")
+        else:
+            corrected_lines.append(line)
 
     return '\n'.join(corrected_lines)
 
