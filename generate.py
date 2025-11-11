@@ -12,6 +12,7 @@ from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from playwright.async_api import async_playwright
+import unicodedata
 # ======================================================
 # LOAD GEMINI API KEY
 # ======================================================
@@ -147,6 +148,27 @@ ADDITIONAL GUIDELINES:
 SCRIPT_DIR = pathlib.Path(__file__).parent.resolve()
 FONTS_DIR = SCRIPT_DIR / "fonts"
 
+DIGIT_TO_LETTER = {'1': 'A', '2': 'B', '3': 'C', '4': 'D'}
+
+def normalize_unicode_digits(text):
+    if text is None:
+        return text
+    chars = []
+    for ch in text:
+        if ch.isdigit() and not ch.isascii():
+            try:
+                chars.append(str(unicodedata.digit(ch)))
+                continue
+            except (TypeError, ValueError):
+                pass
+        chars.append(ch)
+    return ''.join(chars)
+
+def normalize_number_str(num_str):
+    if num_str is None:
+        return ''
+    return normalize_unicode_digits(str(num_str))
+
 def clean_text_html(s):
     """Clean text for HTML display"""
     if not s:
@@ -161,6 +183,8 @@ def parse_mcq_text(text):
     print(text[:1000])
     print("=== END DEBUG ===\n")
     
+    text = normalize_unicode_digits(text)
+
     # Try to add line breaks where questions start
     text = re.sub(r'(\d+)\.', r'\n\1.', text)
     text = re.sub(r'^\s*(\d+)\)', r'\n\1)', text, flags=re.MULTILINE)
@@ -229,15 +253,19 @@ def parse_mcq_text(text):
     text = '\n'.join(processed_lines)
 
     def normalize_option_prefix(match):
-        marker = match.group(1).upper()
+        marker = normalize_number_str(match.group(1)).upper()
         remainder = match.group(2)
-        if marker.isdigit():
-            idx = int(marker)
-            if 1 <= idx <= 4:
-                marker = ['A', 'B', 'C', 'D'][idx - 1]
+        if marker.isdigit() and marker in DIGIT_TO_LETTER:
+            marker = DIGIT_TO_LETTER[marker]
         return f"{marker}) {remainder}" if remainder else f"{marker})"
 
-    text = re.sub(r'(?m)^\s*([A-E1-5])[\.\:-]\s*(\S.*)?', lambda m: normalize_option_prefix(m), text)
+    text = re.sub(
+        r'(?m)^\s*([1-4])\)\s*(.*)',
+        lambda m: f"{DIGIT_TO_LETTER.get(m.group(1), m.group(1))}) {m.group(2).lstrip()}" if DIGIT_TO_LETTER.get(m.group(1)) else m.group(0),
+        text
+    )
+
+    # Try to add line breaks where questions start
     text = re.sub(r'(?mi)^(Answer)\s*[-–]\s*', r"\1: ", text)
     
     questions = []
@@ -256,15 +284,17 @@ def parse_mcq_text(text):
         if not match:
             match = re.match(r'^(?:Question|Que|Qn)\s*(\d+)\s*[:\-]?\s*(.*)', line, re.IGNORECASE)
         if match:
+            q_number = normalize_number_str(match.group(1))
+            question_body = match.group(2)
             if current_q:
                 questions.append(current_q)
             try:
-                auto_counter = int(match.group(1))
+                auto_counter = int(q_number)
             except (ValueError, TypeError):
                 auto_counter += 1
             current_q = {
-                'number': match.group(1) if match.group(1) else str(auto_counter),
-                'content': match.group(2),
+                'number': q_number if q_number else str(auto_counter),
+                'content': question_body,
                 'parts': [],
                 'options': [],
                 'answer': None
@@ -317,11 +347,12 @@ def parse_mcq_text(text):
                     answer_fragment = answer_capture.group(1).strip()
                     answer_fragment = re.sub(r'^[\-\s]+', '', answer_fragment)
                     letter_match = re.search(r'\b([A-D])\b', answer_fragment, re.IGNORECASE)
-                    number_match = re.search(r'\b([1-5])\b', answer_fragment)
+                    number_match = re.search(r'\b([0-9])\b', answer_fragment)
                     if letter_match:
                         normalized_answer = letter_match.group(1).upper()
                     elif number_match:
-                        normalized_answer = number_match.group(1)
+                        num_val = normalize_number_str(number_match.group(1))
+                        normalized_answer = DIGIT_TO_LETTER.get(num_val, num_val)
                     else:
                         paren_letter = re.search(r'\(([A-D])\)', answer_fragment, re.IGNORECASE)
                         option_letter = re.search(r'Option\s+([A-D])', answer_fragment, re.IGNORECASE)
@@ -330,9 +361,7 @@ def parse_mcq_text(text):
                         elif option_letter:
                             normalized_answer = option_letter.group(1).upper()
                 if normalized_answer and normalized_answer.isdigit():
-                    idx = int(normalized_answer)
-                    if 1 <= idx <= 4:
-                        normalized_answer = ['A', 'B', 'C', 'D'][idx - 1]
+                    normalized_answer = DIGIT_TO_LETTER.get(normalized_answer, normalized_answer)
                 if normalized_answer:
                     current_q['answer'] = f"Answer: {normalized_answer}"
                 elif answer_capture:
@@ -476,7 +505,11 @@ def parse_mcq_text(text):
             # Look for answer in content
             answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', content_text, re.IGNORECASE)
             if answer_in_content:
-                current_q['answer'] = f"Answer: {answer_in_content.group(1)}"
+                ans_val = answer_in_content.group(1)
+                ans_val_norm = normalize_number_str(ans_val)
+                if ans_val_norm.isdigit() and ans_val_norm in DIGIT_TO_LETTER:
+                    ans_val = DIGIT_TO_LETTER[ans_val_norm]
+                current_q['answer'] = f"Answer: {ans_val}"
         questions.append(current_q)
     
     # Debug: print what was parsed
@@ -504,12 +537,21 @@ def format_option_marker(raw_marker):
     letter_match = re.match(r'([A-E])', marker, re.IGNORECASE)
     if letter_match:
         return f"{letter_match.group(1).upper()})"
-    number_match = re.match(r'([1-5])', marker)
-    if number_match:
-        idx = int(number_match.group(1))
-        if 1 <= idx <= 4:
-            return f"{['A','B','C','D'][idx-1]})"
-        return f"{number_match.group(1)})"
+    digit_val = None
+    for ch in marker:
+        try:
+            digit_val = unicodedata.digit(ch)
+            break
+        except (TypeError, ValueError):
+            continue
+    if digit_val is None:
+        number_match = re.match(r'([1-5])', marker)
+        if number_match:
+            digit_val = int(number_match.group(1))
+    if digit_val is not None:
+        if 1 <= digit_val <= 4:
+            return f"{['A','B','C','D'][digit_val-1]})"
+        return f"{digit_val})"
     return None
 
 def build_option_line(marker, text):
@@ -733,7 +775,11 @@ async def save_pdf_playwright(text, outpath, lang):
                     # Try to find answer in content
                     answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', content_text, re.IGNORECASE)
                     if answer_in_content:
-                        q_html += f'<div class="answer">Answer: {answer_in_content.group(1)}</div>'
+                        ans_val = answer_in_content.group(1)
+                        ans_val_norm = normalize_number_str(ans_val)
+                        if ans_val_norm.isdigit() and ans_val_norm in DIGIT_TO_LETTER:
+                            ans_val = DIGIT_TO_LETTER[ans_val_norm]
+                        q['answer'] = f"Answer: {ans_val}"
                     else:
                         # Answer not found at all
                         q_html += f'<div class="answer" style="color: #999;">Answer: Not provided</div>'
@@ -868,7 +914,7 @@ if __name__ == "__main__":
     for i, lang in enumerate(languages, 1):
         print(f"{i}. {lang}")
     
-    choice = int(input("\n👉 Enter the number of your language choice: ").strip())
+    choice = int(input("\n Enter the number of your language choice: ").strip())
     if choice < 1 or choice > len(languages):
         raise ValueError("Invalid choice! Please select a valid option.")
     
