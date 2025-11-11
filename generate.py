@@ -117,34 +117,33 @@ CRITICAL FOR {language.upper()} FORMATTING:
 
     prompt = f"""You are an expert exam question generator. Read the following document carefully and generate exactly {n} NEW MCQs.{topic_instruction}
 
-CRITICAL FORMATTING RULES - FOLLOW EXACTLY OR FAIL:
+CRITICAL FORMATTING RULES - FOLLOW EXACTLY:
 1. Write questions and options completely in {language} language
-2. Use ONLY English letters A), B), C), D) for options - NEVER use Hindi numbers or symbols
-3. Use ONLY "Answer: X" where X is A, B, C, or D - NEVER write answers in Hindi
-4. Each question MUST follow this EXACT format:
+2. Use ONLY English letters A), B), C), D) for option MARKERS
+3. Use ONLY "Answer: X" where X is A, B, C, or D - NEVER write answers in local language
+4. Keep all mathematical numbers (3, 4, 5, 6, etc.) as digits - DO NOT translate numbers to words
+5. Each question MUST follow this EXACT format:
 
-1. [Question text in {language} ending with ?]
-A) [Option A in {language}]
-B) [Option B in {language}] 
-C) [Option C in {language}]
-D) [Option D in {language}]
+1. [Question text in {language}?]
+A) [Option A in {language} - keep numbers as digits]
+B) [Option B in {language} - keep numbers as digits] 
+C) [Option C in {language} - keep numbers as digits]
+D) [Option D in {language} - keep numbers as digits]
 Answer: B
 
-2. [Next question text in {language} ending with ?]
-A) [Option A in {language}]
-B) [Option B in {language}]
-C) [Option C in {language}]
-D) [Option D in {language}]
+2. [Next question text in {language}?]
+A) [Option A in {language} - keep numbers as digits]
+B) [Option B in {language} - keep numbers as digits]
+C) [Option C in {language} - keep numbers as digits]
+D) [Option D in {language} - keep numbers as digits]
 Answer: C
 
-ABSOLUTELY FORBIDDEN:
-- DO NOT use Hindi numbers १, २, ३, ४ for options
-- DO NOT use Hindi markers अ, आ, इ, ई for options  
-- DO NOT write "उत्तर:" or any non-English answer label
-- DO NOT put multiple options on one line
-- DO NOT forget the question mark at the end
+IMPORTANT:
+- Use ONLY English A), B), C), D) for option MARKERS
+- Keep mathematical numbers as digits (3, 4, 5, 6) - DO NOT translate numbers to words
+- DO NOT use: १) २) ३) ४) or 1) 2) 3) 4) or अ) आ) इ) ई)
 
-EXAMPLE FOR HINDI - COPY THIS FORMAT EXACTLY:
+EXAMPLE FOR HINDI (note: numbers remain as digits):
 1. दो और दो का योग क्या है?
 A) 3
 B) 4
@@ -152,20 +151,18 @@ C) 5
 D) 6
 Answer: B
 
-2. भारत की राजधानी क्या है?
-A) मुंबई
-B) दिल्ली
-C) कोलकाता
-D) चेन्नई
+EXAMPLE FOR ODIA (note: numbers remain as digits):
+1. ଦୁଇ ଏବଂ ଦୁଇର ଯୋଗଫଳ କ'ଣ?
+A) 3
+B) 4
+C) 5
+D) 6
 Answer: B
 
 Document content:
 {pdf_text[:8000]}
 
-Now generate {n} MCQs following the format above EXACTLY. Remember:
-- Use ONLY A), B), C), D) for options
-- Use ONLY "Answer: X" format with English label!
-- Every question must end with a question mark?"""
+Now generate {n} MCQs following the format above EXACTLY. Use ONLY A), B), C), D) for option markers and keep numbers as digits!"""
 
     model = genai.GenerativeModel("gemini-2.5-pro")
     response = model.generate_content(prompt)
@@ -260,33 +257,52 @@ def generate_topic_mcqs(topic: str, n: int, language: str):
     if not topic:
         raise ValueError("Topic is required for topic-only MCQ generation.")
 
-    prompt = f"""You are an expert exam question generator. Create exactly {n} NEW multiple-choice questions focused on the topic: "{topic}".
+    prompt = f"""You are an expert exam question generator. Create exactly {n} NEW multiple-choice questions focused strictly on the topic: \"{topic}\".
 
-CRITICAL FORMAT RULES - FOLLOW EXACTLY:
-1. Write questions and options in {language} language
-2. Use ONLY English option labels A), B), C), D)
-3. Use "Answer: X" (English label) for the correct option
-4. Follow the format shown below
+CRITICAL FORMATTING RULES - FOLLOW EXACTLY:
+1. Write questions and options completely in {language} language
+2. Use ONLY English letters A), B), C), D) for option MARKERS
+3. Use ONLY "Answer: X" where X is A, B, C, or D - NEVER write answers in local language
+4. Keep all mathematical numbers (3, 4, 5, 6, etc.) as digits - DO NOT translate numbers to words
+5. Each question MUST follow this EXACT format:
 
-1. [Question text in {language}]
-A) [Option A]
-B) [Option B]
-C) [Option C]
-D) [Option D]
+1. [Question text in {language}?]
+A) [Option A in {language} - keep numbers as digits]
+B) [Option B in {language} - keep numbers as digits]
+C) [Option C in {language} - keep numbers as digits]
+D) [Option D in {language} - keep numbers as digits]
 Answer: B
 
-[Continue for all {n} questions.]
+2. [Next question text in {language}?]
+A) [Option A in {language} - keep numbers as digits]
+B) [Option B in {language} - keep numbers as digits]
+C) [Option C in {language} - keep numbers as digits]
+D) [Option D in {language} - keep numbers as digits]
+Answer: C
 
-ADDITIONAL GUIDELINES:
-- Ensure every question is relevant to "{topic}"
-- Balance difficulty: mix of easy, moderate, and challenging
-- Avoid repeating question stems
-- Keep wording concise and exam-appropriate
-"""
+IMPORTANT:
+- Use ONLY English A), B), C), D) for option MARKERS
+- Keep numbers as digits (3, 4, 5, 6) - DO NOT translate numbers to words
+- DO NOT use १) २) ३) ४) or 1) 2) 3) 4) or अ) आ) इ) ई)
+
+EXAMPLE (numbers stay digits):
+1. दो और दो का योग क्या है?
+A) 3
+B) 4
+C) 5
+D) 6
+Answer: B
+
+Generate {n} questions now following the instructions exactly."""
 
     model = genai.GenerativeModel("gemini-2.5-pro")
     response = model.generate_content(prompt)
-    return response.text
+    text = response.text
+
+    if language.lower() in ["hindi", "odia"]:
+        text = correct_gemini_output(text, language)
+
+    return text
 
 # ======================================================
 # GET SCRIPT DIRECTORY FOR FONTS
