@@ -148,7 +148,20 @@ ADDITIONAL GUIDELINES:
 SCRIPT_DIR = pathlib.Path(__file__).parent.resolve()
 FONTS_DIR = SCRIPT_DIR / "fonts"
 
-DIGIT_TO_LETTER = {'1': 'A', '2': 'B', '3': 'C', '4': 'D'}
+DIGIT_TO_LETTER = {'1': 'A', '2': 'B', '3': 'C', '4': 'D', '5': 'E'}
+OPTION_LETTERS = ['A', 'B', 'C', 'D', 'E']
+LOCAL_OPTION_SETS = [
+    ['अ', 'आ', 'इ', 'ई', 'उ'],
+    ['क', 'ख', 'ग', 'घ', 'ङ'],
+    ['ଅ', 'ଆ', 'ଇ', 'ଈ', 'ଉ'],
+]
+LOCAL_OPTION_MAP = {}
+for seq in LOCAL_OPTION_SETS:
+    for idx, char in enumerate(seq):
+        if idx < len(OPTION_LETTERS):
+            LOCAL_OPTION_MAP[char] = OPTION_LETTERS[idx]
+LOCAL_OPTION_KEYS = sorted(LOCAL_OPTION_MAP.keys(), key=len, reverse=True)
+BULLET_PATTERN = r'^[\u2022\u25CF\u25AA\u25AB\u25CB\u25C9\-\–\—\•\●\·]+\s*'
 
 def normalize_unicode_digits(text):
     if text is None:
@@ -168,6 +181,48 @@ def normalize_number_str(num_str):
     if num_str is None:
         return ''
     return normalize_unicode_digits(str(num_str))
+
+def map_option_marker(token, fallback_letter):
+    token = normalize_unicode_digits(token or '').strip()
+    token_clean = re.sub(r'[\s\(\)\[\]\{\}\.:\-]', '', token)
+    if not token_clean:
+        return fallback_letter
+    upper = token_clean.upper()
+    if upper in OPTION_LETTERS:
+        return upper
+    if token_clean in DIGIT_TO_LETTER:
+        return DIGIT_TO_LETTER[token_clean]
+    if upper in DIGIT_TO_LETTER:
+        return DIGIT_TO_LETTER[upper]
+    if token_clean in LOCAL_OPTION_MAP:
+        return LOCAL_OPTION_MAP[token_clean]
+    return fallback_letter
+
+def normalize_answer_value(answer_fragment):
+    if not answer_fragment:
+        return None
+    fragment = normalize_unicode_digits(answer_fragment)
+    letter_match = re.search(r'\b([A-E])\b', fragment, re.IGNORECASE)
+    if letter_match:
+        return letter_match.group(1).upper()
+    digit_match = re.search(r'\b([0-9])\b', fragment)
+    if digit_match:
+        value = digit_match.group(1)
+        mapped = DIGIT_TO_LETTER.get(value)
+        if mapped:
+            return mapped
+    for key in LOCAL_OPTION_KEYS:
+        if key and key in fragment:
+            mapped = LOCAL_OPTION_MAP.get(key)
+            if mapped:
+                return mapped
+    fragment_compact = re.sub(r'[\s:]', '', fragment)
+    for key in LOCAL_OPTION_KEYS:
+        if key and key in fragment_compact:
+            mapped = LOCAL_OPTION_MAP.get(key)
+            if mapped:
+                return mapped
+    return None
 
 def clean_text_html(s):
     """Clean text for HTML display"""
@@ -339,41 +394,23 @@ def parse_mcq_text(text):
             # Hindi: "उत्तर:", "उत्तर: B"
             # Telugu: "సమాధానం:", etc.
             elif (line.startswith('Answer:') or 
-                re.match(r'^(Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9\(\)\s]+)', line, re.IGNORECASE)):
-                # Try to extract answer value (A, B, C, D or 1, 2, 3, 4)
-                answer_capture = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', line, re.IGNORECASE)
+                re.match(r'^(Answer|उत्तर|సమాధానం|ଉତ୍ତర|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9\(\)\s]+)', line, re.IGNORECASE)):
+                answer_capture = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତర|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', line, re.IGNORECASE)
                 normalized_answer = None
                 if answer_capture:
                     answer_fragment = answer_capture.group(1).strip()
                     answer_fragment = re.sub(r'^[\-\s]+', '', answer_fragment)
-                    letter_match = re.search(r'\b([A-D])\b', answer_fragment, re.IGNORECASE)
-                    number_match = re.search(r'\b([0-9])\b', answer_fragment)
-                    if letter_match:
-                        normalized_answer = letter_match.group(1).upper()
-                    elif number_match:
-                        num_val = normalize_number_str(number_match.group(1))
-                        normalized_answer = DIGIT_TO_LETTER.get(num_val, num_val)
-                    else:
-                        paren_letter = re.search(r'\(([A-D])\)', answer_fragment, re.IGNORECASE)
-                        option_letter = re.search(r'Option\s+([A-D])', answer_fragment, re.IGNORECASE)
-                        if paren_letter:
-                            normalized_answer = paren_letter.group(1).upper()
-                        elif option_letter:
-                            normalized_answer = option_letter.group(1).upper()
-                if normalized_answer and normalized_answer.isdigit():
-                    normalized_answer = DIGIT_TO_LETTER.get(normalized_answer, normalized_answer)
+                    normalized_answer = normalize_answer_value(answer_fragment)
                 if normalized_answer:
                     current_q['answer'] = f"Answer: {normalized_answer}"
                 elif answer_capture:
                     current_q['answer'] = f"Answer: {answer_capture.group(1).strip()}"
                 else:
-                    # Fallback: try to find any letter/number after colon/equals
                     fallback_match = re.search(r'[:=]\s*([A-Z0-9]+)', line)
                     if fallback_match:
                         current_q['answer'] = f"Answer: {fallback_match.group(1)}"
                     else:
                         current_q['answer'] = line
-                # End this question
                 if current_q['parts']:
                     current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
                 current_q['options'] = normalize_option_list(current_q.get('options'))
@@ -403,24 +440,6 @@ def parse_mcq_text(text):
                         if not current_q.get('options'):
                             current_q['options'] = []
                         current_q['options'].append(option_line)
-            # Handle lines that start with just ")" - assign sequential letters A, B, C, D
-            # Match ") " with space OR ")180" without space
-            elif re.match(r'^\)\s*[^\s]', line):
-                # Line starts with just ")" followed by non-whitespace - assign option letter based on count
-                opt_count = len(current_q.get('options', []))
-                if opt_count < 4:
-                    option_letter = ['A', 'B', 'C', 'D'][opt_count]
-                    # Remove ")" and any whitespace, get remaining text
-                    option_text = re.sub(r'^\)\s*', '', line).strip()
-                    if option_text and len(option_text) > 0:  # Only add if there's actual text
-                        if not current_q.get('options'):
-                            current_q['options'] = []
-                        current_q['options'].append(f"{option_letter}) {option_text}")
-                        print(f"DEBUG: Assigned letter {option_letter} to option line: '{line[:50]}' -> '{option_letter}) {option_text[:50]}'")
-                else:
-                    # Already have 4 options, might be content - add to parts
-                    current_q['parts'].append(line)
-            # Check if line contains option markers anywhere (for mixed content)
             elif re.search(option_marker_pattern, line, re.IGNORECASE):
                 option_parts = re.split(option_marker_pattern, line)
                 for i in range(1, len(option_parts), 2):
@@ -435,28 +454,13 @@ def parse_mcq_text(text):
                 if not re.match(option_line_pattern, line, re.IGNORECASE):
                     current_q['parts'].append(line)
             else:
-                # Add to current question parts (question text or continuation)
-                if line:
-                    # Before adding to parts, check if this might be an option starting with ")"
-                    # This catches options that might have been missed above
-                    if re.match(r'\)\s*[^\s]', line) and len(current_q.get('options', [])) < 4:
-                        # This looks like an option line starting with ")"
-                        opt_count = len(current_q.get('options', []))
-                        if opt_count < 4:
-                            option_letter = ['A', 'B', 'C', 'D'][opt_count]
-                            option_text = re.sub(r'^\)\s*', '', line).strip()
-                            if option_text:
-                                if not current_q.get('options'):
-                                    current_q['options'] = []
-                                current_q['options'].append(f"{option_letter}) {option_text}")
-                                print(f"DEBUG: Caught option in else clause: '{line[:50]}' -> '{option_letter}) {option_text[:50]}'")
-                            else:
-                                current_q['parts'].append(line)
-                        else:
-                            current_q['parts'].append(line)
-                    else:
-                        current_q['parts'].append(line)
-    
+                potential_option = try_extract_option_line(line, len(current_q.get('options', [])))
+                if potential_option:
+                    if not current_q.get('options'):
+                        current_q['options'] = []
+                    current_q['options'].append(potential_option)
+                    continue
+
     if current_q:
         if not current_q.get('number'):
             auto_counter += 1
@@ -503,17 +507,11 @@ def parse_mcq_text(text):
         # Try to extract answer from content if not found separately
         if not current_q.get('answer'):
             content_text = current_q.get('content', '')
-            # Try to find answer in content
-            answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', content_text, re.IGNORECASE)
+            answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତర|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', content_text, re.IGNORECASE)
             if answer_in_content:
                 ans_val = answer_in_content.group(1)
-                ans_val_norm = normalize_number_str(ans_val)
-                if ans_val_norm.isdigit() and ans_val_norm in DIGIT_TO_LETTER:
-                    ans_val = DIGIT_TO_LETTER[ans_val_norm]
-                q['answer'] = f"Answer: {ans_val}"
-            else:
-                # Answer not found at all
-                q_html += f'<div class="answer" style="color: #999;">Answer: Not provided</div>'
+                mapped = normalize_answer_value(ans_val)
+                current_q['answer'] = f"Answer: {mapped or ans_val}"
         current_q['options'] = normalize_option_list(current_q.get('options'))
         questions.append(current_q)
     
@@ -572,34 +570,60 @@ def normalize_option_list(option_list):
     if not option_list:
         return []
     normalized = []
-    letters = ['A', 'B', 'C', 'D', 'E']
     for idx, opt in enumerate(option_list):
-        opt_str = str(opt or '').strip()
+        opt_str = str(opt or '').strip().replace('â€¢', '•')
         if not opt_str:
             continue
+        opt_str = re.sub(BULLET_PATTERN, '', opt_str).strip()
+        fallback_letter = OPTION_LETTERS[idx] if idx < len(OPTION_LETTERS) else OPTION_LETTERS[0]
+        marker = fallback_letter
         body = opt_str
-        marker = letters[idx] if idx < len(letters) else letters[0]
-        match_letter = re.match(r'^([A-E])\)\s*(.*)', opt_str, re.IGNORECASE)
-        match_digit = re.match(r'^([0-9])\)\s*(.*)', opt_str)
-        if match_letter:
-            existing = match_letter.group(1).upper()
-            body_candidate = match_letter.group(2).strip()
-            if idx < len(letters) and existing == letters[idx]:
-                marker = existing
-            body = body_candidate
-        elif match_digit:
-            normalized_num = normalize_number_str(match_digit.group(1))
-            body_candidate = match_digit.group(2).strip()
-            if normalized_num in DIGIT_TO_LETTER:
-                marker = DIGIT_TO_LETTER[normalized_num]
-            body = body_candidate
+        marker_candidate = None
+        body_candidate = None
+        marker_match = re.match(r'^\s*[\(\[\{]?([^\s\)\]\}\.:]{1,4})[\)\]\}\.:]\s*(.+)', opt_str)
+        if marker_match:
+            marker_candidate = marker_match.group(1)
+            body_candidate = marker_match.group(2)
         else:
-            stripped = re.sub(r'^\)*\s*', '', opt_str).strip()
+            simple_match = re.match(r'^\s*([^\s]{1,4})\s+(.*)', opt_str)
+            if simple_match:
+                marker_candidate = simple_match.group(1)
+                body_candidate = simple_match.group(2)
+        if marker_candidate:
+            mapped = map_option_marker(marker_candidate, fallback_letter)
+            marker = mapped if mapped in OPTION_LETTERS else fallback_letter
+            if body_candidate and body_candidate.strip():
+                body = body_candidate.strip()
+        else:
+            stripped = re.sub(r'^[\)\.\-:]+\s*', '', opt_str)
             if stripped:
                 body = stripped
         if body:
             normalized.append(f"{marker}) {body}")
     return normalized
+
+def try_extract_option_line(line, existing_count):
+    if not line:
+        return None
+    line = line.replace('â€¢', '•')
+    stripped = re.sub(BULLET_PATTERN, '', line.strip()).strip()
+    if not stripped or re.match(r'^(Answer|उत्तर|ସମାଧାନ|ଉତ୍ତର|பதில்|ಉತ್ತರ)', stripped, re.IGNORECASE):
+        return None
+    fallback = OPTION_LETTERS[existing_count] if existing_count < len(OPTION_LETTERS) else OPTION_LETTERS[0]
+    marker_match = re.match(r'^[\(\[\{]?([^\s\)\]\}\.:]{1,4})[\)\]\}\.:]\s*(.+)', stripped)
+    if marker_match:
+        marker_candidate = marker_match.group(1)
+        body_candidate = marker_match.group(2).strip()
+        marker = map_option_marker(marker_candidate, fallback)
+        body = body_candidate
+    else:
+        marker = fallback
+        body = stripped
+    if not body:
+        return None
+    if marker not in OPTION_LETTERS:
+        marker = fallback
+    return f"{marker}) {body}"
 
 async def save_pdf_playwright(text, outpath, lang):
     """Save PDF using Playwright for better Indic font support"""
@@ -776,50 +800,26 @@ async def save_pdf_playwright(text, outpath, lang):
                                           for i, text in enumerate(options_found[:4])]
                 # Answer - handle multiple formats
                 if q.get("answer"):
-                    # Extract answer value - try multiple patterns
                     answer_val = None
-                    # Try English format: "Answer: B"
-                    answer_match = re.search(r'Answer\s*[:=]\s*([A-Z0-9]+)', q["answer"], re.IGNORECASE)
+                    answer_match = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତర|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', q["answer"], re.IGNORECASE)
                     if answer_match:
-                        answer_val = answer_match.group(1)
-                    else:
-                        # Try Hindi format: "उत्तर: B"
-                        answer_match = re.search(r'(?:उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', q["answer"], re.IGNORECASE)
-                        if answer_match:
-                            answer_val = answer_match.group(1)
-                        else:
-                            # Fallback: find any letter/number after colon/equals
-                            fallback_match = re.search(r'[:=]\s*([A-Z0-9]+)', q["answer"])
-                            if fallback_match:
-                                answer_val = fallback_match.group(1)
-                    
+                        answer_val = normalize_answer_value(answer_match.group(1))
+                    if not answer_val:
+                        fallback_match = re.search(r'[:=]\s*([A-Z0-9]+)', q["answer"])
+                        if fallback_match:
+                            answer_val = normalize_answer_value(fallback_match.group(1))
                     if answer_val:
-                        # Use English font for "Answer:" label and value
                         q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">Answer: {answer_val}</span></div>'
                     else:
-                        # Display as-is if we can't extract - ensure label uses English font
                         answer_text = q["answer"]
-                        # Try to extract label and value separately
-                        answer_label_match = re.search(r'(Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', answer_text, re.IGNORECASE)
-                        if answer_label_match:
-                            answer_label = answer_label_match.group(1)
-                            answer_value = answer_label_match.group(2)
-                            q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">Answer: {answer_value}</span></div>'
-                        else:
-                            q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">{clean_text_html(answer_text)}</span></div>'
+                        q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">{clean_text_html(answer_text)}</span></div>'
                 else:
-                    # No answer found - might be missing, check if it's in content
                     content_text = q.get("content", "")
-                    # Try to find answer in content
-                    answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', content_text, re.IGNORECASE)
+                    answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତర|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', content_text, re.IGNORECASE)
                     if answer_in_content:
-                        ans_val = answer_in_content.group(1)
-                        ans_val_norm = normalize_number_str(ans_val)
-                        if ans_val_norm.isdigit() and ans_val_norm in DIGIT_TO_LETTER:
-                            ans_val = DIGIT_TO_LETTER[ans_val_norm]
-                        q['answer'] = f"Answer: {ans_val}"
+                        ans_val = normalize_answer_value(answer_in_content.group(1))
+                        q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">Answer: {ans_val or answer_in_content.group(1)}</span></div>'
                     else:
-                        # Answer not found at all
                         q_html += f'<div class="answer" style="color: #999;">Answer: Not provided</div>'
                 q_html += '</div>'
                 content_parts.append(q_html)
