@@ -123,6 +123,7 @@ def parse_mcq_text(text):
     
     # Try to add line breaks where questions start
     text = re.sub(r'(\d+)\.', r'\n\1.', text)
+    text = re.sub(r'^\s*(\d+)\)', r'\n\1)', text, flags=re.MULTILINE)
     
     # Fix concatenated options like "A) 120%B) 135%C) 150%D) 100%" - split them
     # More aggressive splitting to handle all concatenated patterns
@@ -191,6 +192,7 @@ def parse_mcq_text(text):
     lines = text.split('\n')
     
     current_q = None
+    auto_counter = 0
     
     for line in lines:
         line = line.strip()
@@ -198,17 +200,35 @@ def parse_mcq_text(text):
             continue
             
         # Check if this is a question number
-        match = re.match(r'^(\d+)\.\s*(.*)', line)
+        match = re.match(r'^(?:Q\s*)?(\d+)[\.\)]\s*(.*)', line, re.IGNORECASE)
+        if not match:
+            match = re.match(r'^(?:Question|Que|Qn)\s*(\d+)\s*[:\-]?\s*(.*)', line, re.IGNORECASE)
         if match:
             if current_q:
                 questions.append(current_q)
+            try:
+                auto_counter = int(match.group(1))
+            except (ValueError, TypeError):
+                auto_counter += 1
             current_q = {
-                'number': match.group(1),
+                'number': match.group(1) if match.group(1) else str(auto_counter),
                 'content': match.group(2),
                 'parts': [],
                 'options': [],
                 'answer': None
             }
+            continue
+        if current_q is None and re.match(r'^(?:Question|Que|Qn)\b', line, re.IGNORECASE):
+            auto_counter += 1
+            question_text = re.sub(r'^(?:Question|Que|Qn)\b\s*[:\-]?\s*', '', line, flags=re.IGNORECASE)
+            current_q = {
+                'number': str(auto_counter),
+                'content': question_text,
+                'parts': [],
+                'options': [],
+                'answer': None
+            }
+            continue
         elif current_q:
             # Check if this line starts with "Options:" followed by concatenated options
             # Handle "Options:A) 120%B) 135%C) 150%D) 100%" format
@@ -237,11 +257,30 @@ def parse_mcq_text(text):
             # Hindi: "उत्तर:", "उत्तर: B"
             # Telugu: "సమాధానం:", etc.
             elif (line.startswith('Answer:') or 
-                re.match(r'^(Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', line, re.IGNORECASE)):
+                re.match(r'^(Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9\(\)\s]+)', line, re.IGNORECASE)):
                 # Try to extract answer value (A, B, C, D or 1, 2, 3, 4)
-                answer_match = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತर)\s*[:=]\s*([A-Z0-9]+)', line, re.IGNORECASE)
-                if answer_match:
-                    current_q['answer'] = f"Answer: {answer_match.group(1)}"
+                answer_capture = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତర|பதில்|ಉತ್ತర)\s*[:=]\s*(.+)', line, re.IGNORECASE)
+                normalized_answer = None
+                if answer_capture:
+                    answer_fragment = answer_capture.group(1).strip()
+                    answer_fragment = re.sub(r'^[\-\s]+', '', answer_fragment)
+                    letter_match = re.search(r'\b([A-D])\b', answer_fragment, re.IGNORECASE)
+                    number_match = re.search(r'\b([1-5])\b', answer_fragment)
+                    if letter_match:
+                        normalized_answer = letter_match.group(1).upper()
+                    elif number_match:
+                        normalized_answer = number_match.group(1)
+                    else:
+                        paren_letter = re.search(r'\(([A-D])\)', answer_fragment, re.IGNORECASE)
+                        option_letter = re.search(r'Option\s+([A-D])', answer_fragment, re.IGNORECASE)
+                        if paren_letter:
+                            normalized_answer = paren_letter.group(1).upper()
+                        elif option_letter:
+                            normalized_answer = option_letter.group(1).upper()
+                if normalized_answer:
+                    current_q['answer'] = f"Answer: {normalized_answer}"
+                elif answer_capture:
+                    current_q['answer'] = f"Answer: {answer_capture.group(1).strip()}"
                 else:
                     # Fallback: try to find any letter/number after colon/equals
                     fallback_match = re.search(r'[:=]\s*([A-Z0-9]+)', line)
@@ -333,6 +372,9 @@ def parse_mcq_text(text):
                         current_q['parts'].append(line)
     
     if current_q:
+        if not current_q.get('number'):
+            auto_counter += 1
+            current_q['number'] = str(auto_counter)
         if current_q['parts']:
             current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
         # Try to extract options from content if not found separately
@@ -587,7 +629,7 @@ async def save_pdf_playwright(text, outpath, lang):
                         # Display as-is if we can't extract - ensure label uses English font
                         answer_text = q["answer"]
                         # Try to extract label and value separately
-                        answer_label_match = re.search(r'(Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತर)\s*[:=]\s*([A-Z0-9]+)', answer_text, re.IGNORECASE)
+                        answer_label_match = re.search(r'(Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', answer_text, re.IGNORECASE)
                         if answer_label_match:
                             answer_label = answer_label_match.group(1)
                             answer_value = answer_label_match.group(2)
