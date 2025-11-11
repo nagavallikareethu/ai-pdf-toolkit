@@ -328,7 +328,7 @@ Return only 2-line explanation text.
                                 context_start = max(0, match_start - 300)
                                 context_text = text[context_start:match_start]
                                 # Find question text in context
-                                context_q_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|A\s+sum|A\s+tap|how\s+much|find\s+the)', context_text, re.IGNORECASE)
+                                context_q_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|ratio|percent|number|students|amount|value|time|days|speed|probability|gain|loss|Area|A\s+sum|A\s+tap|A\s+boat|A\s+shopkeeper|Sirisha|population|tank|tap|empty|fill)', context_text, re.IGNORECASE)
                                 if context_q_start:
                                     # Found question start in context, include it
                                     full_q = context_text[context_q_start.start():] + text[match_start:end_pos]
@@ -359,7 +359,7 @@ Return only 2-line explanation text.
                         pass
                     else:
                         # Likely incomplete - skip if too short
-                        if len(q_text) < 30:
+                        if len(q_text) < 8:
                             continue
                 else:
                     # Has question mark - extract up to the question mark (including all context)
@@ -409,7 +409,7 @@ Return only 2-line explanation text.
                     continue  # Skip data descriptions that aren't questions
                 
                 # Must have meaningful question text (not just numbers or metadata)
-                has_question_words = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|ratio|percent|number|students|amount|value|time|days|speed|probability|gain|loss|Area|A\s+sum|A\s+tap|A\s+boat|A\s+shopkeeper|Sirisha|population|tank|tap|empty|fill)', q_text, re.IGNORECASE)
+                has_question_words = re.search(r'(Find|Calculate|What|How|Which|If\s+|When|Who|Total|Average|Out\s+of|In\s+\d{4}|ratio|percent|probability|number|students|amount|value|time|day|days|speed|distance|gain|loss|Area|Determine|Compute|Choose|Select|Based\s+on|According\s+to|A\s+sum|A\s+tap|A\s+boat|A\s+man|A\s+shopkeeper|population|tank|tap|empty|fill)', q_text, re.IGNORECASE)
                 
                 # Check if it's a number series or pattern question
                 is_pattern_question = re.search(r'^\d+\s+\d+\s+\d+\s+\?', q_text) or (re.search(r'^\d+\s+\d+\s+\d+', q_text) and '?' in q_text)
@@ -425,7 +425,7 @@ Return only 2-line explanation text.
                 is_valid = (
                     (has_question_words or is_pattern_question) and
                     (has_question_mark or has_options or is_pattern_question) and
-                    len(q_text) >= (20 if is_pattern_question else 30)
+                    len(q_text) >= (20 if is_pattern_question else 15)
                 )
                 
                 # Skip if not valid
@@ -954,7 +954,7 @@ Return ONLY the JSON object:"""
                             retry_delay *= 2
                             continue
                         else:
-                            # Final attempt failed - store with error but still add to list
+                            # Final attempt failed - save with error but still add to list
                             print(f"Error: Could not extract translation for question {item.get('question_number', '?')} after {max_retries} attempts. Using original text.")
                             merged = {**item, f"translation_error_{lang_lower}": "Failed to extract translation", f"raw_translation_{lang_lower}": response_text}
                             translated.append(merged)
