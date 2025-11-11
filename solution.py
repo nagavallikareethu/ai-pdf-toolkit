@@ -195,7 +195,7 @@ Return only 2-line explanation text.
         # This helps ensure we extract questions individually
         # Match question numbers (typically 31-65, 2 digits, or single/double digit in some contexts)
         # Look for patterns like "31.", "32.", etc. followed by text (not another number)
-        question_matches = list(re.finditer(r'\b(\d{1,2})\.\s+(?!\d+\.\s+[A-Z]|Total|The|No\.|Class|Ratio)', text))
+        question_matches = list(re.finditer(r'\b(\d{1,2})\.\s+(?!\d+\.\s+[A-Z]|Total|The|No\.|Class|Ratio|Years|Students|Number)', text))
         
         # Filter out invalid question numbers and detect actual question range
         valid_questions = []
@@ -215,21 +215,15 @@ Return only 2-line explanation text.
             q_nums = [int(m.group(1)) for m in valid_questions]
             min_q = min(q_nums)
             max_q = max(q_nums)
-            
-            # Check if we have questions in the 31+ range (actual exam questions)
             questions_31_plus = [q for q in q_nums if 31 <= q <= 100]
             questions_1_30 = [q for q in q_nums if 1 <= q <= 30]
-            
-            # If we have questions 31+ AND we also have Q1-Q30, filter out Q1-Q30
-            # This means the actual question range is 31+, and Q1-Q30 are likely headers/fragments
-            if len(questions_31_plus) >= 3 and len(questions_1_30) > 0:
+            if len(questions_31_plus) >= 5 and len(questions_1_30) > 0:
                 print(f"Detected question range 31-{max_q}. Filtering out Q1-Q30 (likely headers/metadata).")
-                # Filter out questions < 31 (likely headers/metadata)
                 valid_questions = [m for m in valid_questions if int(m.group(1)) >= 31]
-            # Also filter if min is >= 31 (all questions are 31+)
             elif min_q >= 31:
-                # Filter out any questions < 31 (shouldn't be any, but just in case)
                 valid_questions = [m for m in valid_questions if int(m.group(1)) >= 31]
+            else:
+                print(f"Keeping all questions from {min_q} to {max_q}")
         
         if len(valid_questions) > 1:
             # Found multiple valid questions - process each separately
@@ -274,31 +268,36 @@ Return only 2-line explanation text.
                 else:
                     start_pos = max(0, match_start - 200)  # For first question, look back up to 200 chars
                 
-                # Find end position (next question number or end of text)
                 if i + 1 < len(valid_questions):
                     next_match_start = valid_questions[i + 1].start()
                     end_pos = min(next_match_start, len(text))
                 else:
                     end_pos = len(text)
-                
-                q_text = text[start_pos:end_pos].strip()
-                # Clean the question text immediately to remove unwanted content
-                q_text = re.sub(r'^\d+\.\s*\d+\s+[A-Z][^?]*?Sreedhar\'s\s+CCE[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'Sreedhar\'s\s+CCE[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'SBI\s+CLERK[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'LIC\s+Asst\.[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'PRELIMS\s+MT[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'NIACL\s+Asst\.[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'TIER-I[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'NUMERICAL\s+ABILITY[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'Directions\s*\([^)]+\)[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'Study\s+the\s+data\s+carefully[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'answer\s+the\s+following\s+questions[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'The\s+Bar-chart\s+shows[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'\d+\s+\d{4}\s+\d{4}[^?]*?', '', q_text)  # Remove chart axis
-                q_text = re.sub(r'Years\s+in\s+Lakhs[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'MTS\s+CGL\s+CHSL[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'MODEL\s+TEST[^?]*?', '', q_text, flags=re.IGNORECASE | re.DOTALL)
+
+                q_text = text[match_start:end_pos].strip()
+
+                cleaning_patterns = [
+                    r"Sreedhar's\s+CCE[^?]*?",
+                    r'SBI\s+CLERK[^?]*?',
+                    r'LIC\s+Asst\.[^?]*?',
+                    r'PRELIMS\s+MT[^?]*?',
+                    r'NIACL\s+Asst\.[^?]*?',
+                    r'TIER-I[^?]*?',
+                    r'NUMERICAL\s+ABILITY[^?]*?',
+                    r'Directions\s*\([^)]+\)[^?]*?',
+                    r'Study\s+the\s+data\s+carefully[^?]*?',
+                    r'answer\s+the\s+following\s+questions[^?]*?',
+                    r'The\s+Bar-chart\s+shows[^?]*?',
+                    r'\d+\s+\d{4}\s+\d{4}[^?]*?',
+                    r'Years\s+in\s+Lakhs[^?]*?',
+                    r'MTS\s+CGL\s+CHSL[^?]*?',
+                    r'MODEL\s+TEST[^?]*?',
+                ]
+
+                for pattern in cleaning_patterns:
+                    q_text = re.sub(pattern, '', q_text, flags=re.IGNORECASE | re.DOTALL)
+
+                q_text = re.sub(r'\s+', ' ', q_text).strip()
                 
                 # Find the actual question - look for question text that might start before the number
                 # First, try to find the question number and extract from there
@@ -404,31 +403,12 @@ Return only 2-line explanation text.
                     re.search(r'Ratio\s+of\s+the\s+number\s+of\s+students', q_text, re.IGNORECASE) or
                     re.search(r'no\.\s+of\s+students\s+in\s+group', q_text, re.IGNORECASE)
                 )
-                
+
                 if is_data_description and '?' not in q_text:
-                    continue  # Skip data descriptions that aren't questions
-                
-                # Must have meaningful question text (not just numbers or metadata)
-                has_question_words = re.search(r'(Find|Calculate|What|How|Which|If\s+|When|Who|Total|Average|Out\s+of|In\s+\d{4}|ratio|percent|probability|number|students|amount|value|time|day|days|speed|distance|gain|loss|Area|Determine|Compute|Choose|Select|Based\s+on|According\s+to|A\s+sum|A\s+tap|A\s+boat|A\s+man|A\s+shopkeeper|population|tank|tap|empty|fill)', q_text, re.IGNORECASE)
-                
-                # Check if it's a number series or pattern question
-                is_pattern_question = re.search(r'^\d+\s+\d+\s+\d+\s+\?', q_text) or (re.search(r'^\d+\s+\d+\s+\d+', q_text) and '?' in q_text)
-                
-                # Check if question is complete (ends with ? or has options)
-                has_question_mark = '?' in q_text
-                has_options = re.search(r'1\)\s+|2\)\s+|3\)\s+|4\)\s+|5\)\s+', q_text)
-                
-                # Question must:
-                # 1. Have question words OR be a pattern question OR
-                # 2. End with ? (complete question) OR have options (complete question)
-                # 3. Be long enough (at least 20 chars for pattern, 30 for regular)
-                is_valid = (
-                    (has_question_words or is_pattern_question) and
-                    (has_question_mark or has_options or is_pattern_question) and
-                    len(q_text) >= (20 if is_pattern_question else 8)
-                )
-                
-                # Skip if not valid
+                    continue
+
+                is_valid = len(q_text) >= 15 and not q_text.startswith(('0 ', '10 ', '20 ', '30 ', '40 ', '50 '))
+
                 if not is_valid:
                     continue
                 
@@ -519,6 +499,9 @@ Return only 2-line explanation text.
                 
                 page_questions.append({"num": q_num, "text": q_text, "options": options_text})
             
+            print(f"Page {page['page']}: Extracted {len(page_questions)} questions")
+            for pq in page_questions:
+                print(f"  Q{pq['num']}: {pq['text'][:50]}...")
             # Process questions in batches for better performance
             # Include page context for questions that might need chart/table data
             page_context = text[:2000]  # First 2000 chars usually contain chart/table descriptions
@@ -1090,7 +1073,7 @@ def build_html(pages, lang):
     lang_labels = {
         "telugu": ("సమాధానం", "వివరణ", "తెలుగులో అనువదించిన ప్రశ్నపత్రం"),
         "hindi":  ("उत्तर", "व्याख्या", "हिंदी में अनुवादित प्रश्नपत्र"),
-        "odia":   ("ଉତ୍ତର", "ବ୍ୟାଖ୍ୟା", "ଓଡ଼ିଆରେ ଅନୁବାଦିତ ପ୍ରଶ୍ନପତ୍ର"),
+        "odia":   ("ଉତ୍ତର", "ବ୍ୟାଖ୍ୟା", "ଓଡ଼ିଆରେ ଅନୁବାଦିତ ପ୍ରశ్ନପତ୍ର"),
         "tamil":  ("பதில்", "விரிவுரை", "தமிழில் மொழிபெயர்த்த கேள்வித்தாள்"),
         "kannada":("ಉತ್ತರ", "ವಿವರಣೆ", "ಕನ್ನಡದಲ್ಲಿ ಅನುವಾದಿತ ಪ್ರಶ್ನೆ ಪತ್ರಿಕೆ"),
         "english": ("Answer", "Explanation", "Translated Question Paper in English")
@@ -1212,7 +1195,7 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
     lang_labels = {
         "telugu": ("సమాధానం", "వివరణ", "తెలుగులో అనువదించిన ప్రశ్నపత్రం"),
         "hindi":  ("उत्तर", "व्याख्या", "हिंदी में अनुवादित प्रश्नपत्र"),
-        "odia":   ("ଉତ୍ତର", "ବ୍ୟାଖ୍ୟା", "ଓଡ଼ିଆରେ ଅନୁବାଦିତ ପ୍ରଶ୍ନପତ୍ର"),
+        "odia":   ("ଉତ୍ତର", "ବ୍ୟାଖ୍ୟା", "ଓଡ଼ିଆରେ ଅନୁବାଦିତ ପ୍ରశ్ନପତ୍ର"),
         "tamil":  ("பதில்", "விரிவுரை", "தமிழில் மொழிபெயர்த்த கேள்வித்தாள்"),
         "kannada":("ಉತ್ತರ", "ವಿವರಣೆ", "ಕನ್ನಡದಲ್ಲಿ ಅನುವಾದಿತ ಪ್ರಶ್ನೆ ಪತ್ರಿಕೆ"),
         "english": ("Answer", "Explanation", "Translated Question Paper in English")
