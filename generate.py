@@ -62,7 +62,7 @@ CRITICAL FORMATTING RULES - FOLLOW EXACTLY:
 
 1. [Question text in {language}]
 A) [Option A text in {language}]
-B) [Option B text in {language}]  
+B) [Option B text in {language}]
 C) [Option C text in {language}]
 D) [Option D text in {language}]
 Answer: B
@@ -97,10 +97,17 @@ C) 5
 D) 6
 Answer: B
 
-2Document content:
-    {pdf_text[:10000]}
+2. What is the capital of France?
+A) London
+B) Berlin
+C) Paris
+D) Madrid
+Answer: C
 
-Now generate {n} MCQs following the format above EXACTLY. Remember: 
+Document content:
+{pdf_text[:10000]}
+
+Now generate {n} MCQs following the format above EXACTLY. Remember:
 - Use A), B), C), D) for options (NOT just ) or 1), 2), 3), 4))
 - Use "Answer: X" format with English label!"""
 
@@ -394,8 +401,10 @@ def parse_mcq_text(text):
             # Hindi: "उत्तर:", "उत्तर: B"
             # Telugu: "సమాధానం:", etc.
             elif (line.startswith('Answer:') or 
-                re.match(r'^(Answer|उत्तर|సమాధానం|ଉତ୍ତర|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9\(\)\s]+)', line, re.IGNORECASE)):
-                answer_capture = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତర|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', line, re.IGNORECASE)
+                re.match(r'^(Answer|उत्तर|సమాధానం|ଉତ్తର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9\(\)\s]+)', line, re.IGNORECASE)):
+                answer_capture = re.search(r'Answer\s*[:=]\s*(.+)', line, re.IGNORECASE)
+                if not answer_capture:
+                    answer_capture = re.search(r'(?:उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', line, re.IGNORECASE)
                 normalized_answer = None
                 if answer_capture:
                     answer_fragment = answer_capture.group(1).strip()
@@ -410,12 +419,25 @@ def parse_mcq_text(text):
                     if fallback_match:
                         current_q['answer'] = f"Answer: {fallback_match.group(1)}"
                     else:
-                        current_q['answer'] = line
+                        current_q['answer'] = "Answer: " + line
                 if current_q['parts']:
                     current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
                 current_q['options'] = normalize_option_list(current_q.get('options'))
                 questions.append(current_q)
                 current_q = None
+            # Check if this is an English-labelled option first
+            elif re.match(r'^[A-D][\)\.:]\s*', line, re.IGNORECASE):
+                english_match = re.match(r'^([A-D])[\)\.:]\s*(.*)', line, re.IGNORECASE)
+                if english_match:
+                    marker = english_match.group(1).upper()
+                    opt_text = english_match.group(2).strip()
+                    option_line = f"{marker}) {opt_text}"
+                    if not current_q.get('options'):
+                        current_q['options'] = []
+                    current_q['options'].append(option_line)
+                    print(f"DEBUG: Found English option: '{option_line[:50]}'")
+                    continue
+
             # Check if this is an option (A), B), C), D) or 1), 2), 3), 4), 5))
             # More flexible: allow spaces after marker, handle various formats
             elif re.match(option_line_pattern, line, re.IGNORECASE):
@@ -708,63 +730,17 @@ async def save_pdf_playwright(text, outpath, lang):
                 # Options (if separate from content) - use English font for markers
                 if q.get("options") and len(q["options"]) > 0:
                     options_html = '<div style="margin: 8px 0;"><strong>Options:</strong><br>'
-                    # Debug: print options before rendering
                     print(f"DEBUG: Rendering options for Q{q['number']}: {q['options']}")
-                    
-                    # First, check if all options are in a single string (concatenated)
-                    # If so, split them first
-                    all_options_text = ' '.join(str(opt) for opt in q["options"])
-                    option_count = len(re.findall(r'[A-E]\)|[1-5]\)', all_options_text, re.IGNORECASE))
-                    
-                    if option_count >= 2 and len(q["options"]) == 1:
-                        # Single string with multiple options - split it
-                        print(f"DEBUG: Found concatenated options in single string: {all_options_text[:100]}")
-                        split_options = re.split(r'([A-E]\)|[1-5]\))', all_options_text, flags=re.IGNORECASE)
-                        for i in range(1, len(split_options), 2):
-                            if i + 1 < len(split_options):
-                                opt_marker = split_options[i]
-                                opt_text = split_options[i + 1].strip() if i + 1 < len(split_options) else ""
-                                if opt_marker and opt_text:
-                                    # Each option on its own line with proper spacing
-                                    options_html += f'<div style="margin: 4px 0;"><span style="font-family: Arial, sans-serif; font-weight: bold;">{opt_marker}</span> {clean_text_html(opt_text)}</div>'
-                                    print(f"DEBUG: Rendered option: {opt_marker} {opt_text[:30]}")
-                    else:
-                        # Options are already separate - render each one
-                        for opt in q["options"]:
-                            opt_clean = str(opt).strip()
-                            # Check if this single option contains multiple concatenated options
-                            split_options = re.split(r'([A-E]\)|[1-5]\))', opt_clean, flags=re.IGNORECASE)
-                            
-                            if len(split_options) > 3:  # Multiple options in one string
-                                # Process each split option
-                                for i in range(1, len(split_options), 2):
-                                    if i + 1 < len(split_options):
-                                        opt_marker = split_options[i]
-                                        opt_text = split_options[i + 1].strip() if i + 1 < len(split_options) else ""
-                                        if opt_marker and opt_text:
-                                            # Each option on its own line with proper spacing
-                                            options_html += f'<div style="margin: 4px 0;"><span style="font-family: Arial, sans-serif; font-weight: bold;">{opt_marker}</span> {clean_text_html(opt_text)}</div>'
-                                            print(f"DEBUG: Split and rendered option: {opt_marker} {opt_text[:30]}")
-                            else:
-                                # Single option - extract marker and text
-                                opt_match = re.match(r'^([A-E]\)|[1-5]\))\s*(.*)', opt_clean, re.IGNORECASE)
-                                if opt_match:
-                                    opt_marker = opt_match.group(1)
-                                    opt_text = opt_match.group(2)
-                                    # Each option on its own line (using <div> instead of <span> for proper line breaks)
-                                    options_html += f'<div style="margin: 4px 0;"><span style="font-family: Arial, sans-serif; font-weight: bold;">{opt_marker}</span> {clean_text_html(opt_text)}</div>'
-                                    print(f"DEBUG: Rendered single option: {opt_marker} {opt_text[:30]}")
-                                else:
-                                    # Fallback: try to find marker anywhere in option
-                                    opt_marker_match = re.search(r'([A-E]\)|[1-5]\))', opt_clean, re.IGNORECASE)
-                                    if opt_marker_match:
-                                        marker_pos = opt_marker_match.start()
-                                        opt_marker = opt_marker_match.group(1)
-                                        opt_text = opt_clean[:marker_pos] + opt_clean[marker_pos + len(opt_marker):]
-                                        options_html += f'<div style="margin: 4px 0;"><span style="font-family: Arial, sans-serif; font-weight: bold;">{opt_marker}</span> {clean_text_html(opt_text.strip())}</div>'
-                                    else:
-                                        # No marker found, display as-is but clean HTML
-                                        options_html += f'<div style="margin: 4px 0;">{clean_text_html(opt_clean)}</div>'
+                    for opt in q["options"]:
+                        opt_clean = str(opt).strip()
+                        opt_match = re.match(r'^([A-D])\)\s*(.*)', opt_clean, re.IGNORECASE)
+                        if opt_match:
+                            opt_marker = opt_match.group(1).upper() + ")"
+                            opt_text = opt_match.group(2)
+                            options_html += f'<div style="margin: 4px 0;"><span style="font-family: Arial, sans-serif; font-weight: bold;">{opt_marker}</span> {clean_text_html(opt_text)}</div>'
+                            print(f"DEBUG: Rendered option: {opt_marker} {opt_text[:30]}")
+                        else:
+                            options_html += f'<div style="margin: 4px 0;">{clean_text_html(opt_clean)}</div>'
                     options_html += '</div>'
                     q_html += options_html
                 else:
@@ -801,24 +777,24 @@ async def save_pdf_playwright(text, outpath, lang):
                 # Answer - handle multiple formats
                 if q.get("answer"):
                     answer_val = None
-                    answer_match = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତర|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', q["answer"], re.IGNORECASE)
+                    answer_match = re.search(r'Answer\s*[:=]\s*([A-D])', q["answer"], re.IGNORECASE)
+                    if not answer_match:
+                        answer_match = re.search(r'[:=]\s*([A-D])', q["answer"], re.IGNORECASE)
                     if answer_match:
-                        answer_val = normalize_answer_value(answer_match.group(1))
-                    if not answer_val:
-                        fallback_match = re.search(r'[:=]\s*([A-Z0-9]+)', q["answer"])
-                        if fallback_match:
-                            answer_val = normalize_answer_value(fallback_match.group(1))
-                    if answer_val:
+                        answer_val = answer_match.group(1).upper()
                         q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">Answer: {answer_val}</span></div>'
                     else:
                         answer_text = q["answer"]
+                        if not answer_text.startswith('Answer:'):
+                            answer_text = 'Answer: ' + answer_text
                         q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">{clean_text_html(answer_text)}</span></div>'
                 else:
                     content_text = q.get("content", "")
-                    answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତర|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', content_text, re.IGNORECASE)
+                    answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉత్తర|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', content_text, re.IGNORECASE)
                     if answer_in_content:
                         ans_val = normalize_answer_value(answer_in_content.group(1))
-                        q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">Answer: {ans_val or answer_in_content.group(1)}</span></div>'
+                        mapped = ans_val or answer_in_content.group(1)
+                        q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">Answer: {mapped}</span></div>'
                     else:
                         q_html += f'<div class="answer" style="color: #999;">Answer: Not provided</div>'
                 q_html += '</div>'
