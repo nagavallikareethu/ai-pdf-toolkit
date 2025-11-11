@@ -37,13 +37,21 @@ def extract_text_from_pdf(pdf_path):
 # ======================================================
 # GEMINI CALL FUNCTION
 # ======================================================
-def generate_mcqs(pdf_path, n, language):
+def generate_mcqs(pdf_path, n, language, topic=None):
     pdf_text = extract_text_from_pdf(pdf_path)
 
     if not pdf_text:
         raise ValueError("ERROR: No readable text found in the PDF! Make sure it's not just scanned images.")
 
-    prompt = f"""You are an expert exam question generator. Read the following document carefully and generate exactly {n} NEW MCQs.
+    topic_instruction = ""
+    if topic:
+        topic_instruction = f"""
+
+ADDITIONAL TOPIC REQUIREMENT:
+- Focus the questions strictly on the topic: "{topic}".
+- Prefer PDF content that relates to this topic. If the PDF has limited coverage, craft questions that are still consistent with the document's style while centering the topic."""
+
+    prompt = f"""You are an expert exam question generator. Read the following document carefully and generate exactly {n} NEW MCQs.{topic_instruction}
 
 CRITICAL FORMATTING RULES - FOLLOW EXACTLY:
 1. Write questions and options in {language} language
@@ -133,15 +141,15 @@ def parse_mcq_text(text):
     def split_options_in_text(match):
         prefix = match.group(1)
         options_text = match.group(2)
-        # Split by option markers (A), B), C), D))
-        parts = re.split(r'([A-E]\)|[1-5]\))', options_text, flags=re.IGNORECASE)
+        parts = re.split(option_marker_pattern, options_text, flags=re.IGNORECASE)
         result = []
         for i in range(1, len(parts), 2):
             if i + 1 < len(parts):
                 marker = parts[i]
-                text = parts[i + 1].strip()
-                if marker and text:
-                    result.append(f"{marker} {text}")
+                text = parts[i + 1]
+                option_line = build_option_line(marker, text)
+                if option_line:
+                    result.append(option_line)
         return prefix + "\n".join(result) if result else match.group(0)
     
     # Apply splitting to lines with "Options:" prefix
@@ -151,15 +159,15 @@ def parse_mcq_text(text):
     # Match pattern: A)textB)textC)textD)text (anywhere in text)
     def split_concatenated_options(match):
         full_match = match.group(0)
-        # Split by option markers
-        parts = re.split(r'([A-E]\)|[1-5]\))', full_match, flags=re.IGNORECASE)
+        parts = re.split(option_marker_pattern, full_match, flags=re.IGNORECASE)
         result = []
         for i in range(1, len(parts), 2):
             if i + 1 < len(parts):
                 marker = parts[i]
-                text = parts[i + 1].strip()
-                if marker and text:
-                    result.append(f"{marker} {text}")
+                text = parts[i + 1]
+                option_line = build_option_line(marker, text)
+                if option_line:
+                    result.append(option_line)
         return "\n".join(result) if result else full_match
     
     # Find and split any line that contains multiple option markers without newlines between them
@@ -168,17 +176,17 @@ def parse_mcq_text(text):
     processed_lines = []
     for line in lines:
         # Check if line contains multiple option markers (A), B), C), D) or 1), 2), etc.)
-        option_count = len(re.findall(r'[A-E]\)|[1-5]\)', line, re.IGNORECASE))
+        option_count = len(re.findall(option_marker_pattern, line, re.IGNORECASE))
         if option_count >= 2:  # Multiple options in one line
-            # Split this line
-            parts = re.split(r'([A-E]\)|[1-5]\))', line, flags=re.IGNORECASE)
+            parts = re.split(option_marker_pattern, line, flags=re.IGNORECASE)
             split_parts = []
             for i in range(1, len(parts), 2):
                 if i + 1 < len(parts):
                     marker = parts[i]
-                    text = parts[i + 1].strip()
-                    if marker and text:
-                        split_parts.append(f"{marker} {text}")
+                    text_segment = parts[i + 1]
+                    option_line = build_option_line(marker, text_segment)
+                    if option_line:
+                        split_parts.append(option_line)
             if split_parts:
                 processed_lines.extend(split_parts)
             else:
@@ -187,6 +195,18 @@ def parse_mcq_text(text):
             processed_lines.append(line)
     
     text = '\n'.join(processed_lines)
+
+    def normalize_option_prefix(match):
+        marker = match.group(1).upper()
+        remainder = match.group(2)
+        if marker.isdigit():
+            idx = int(marker)
+            if 1 <= idx <= 4:
+                marker = ['A', 'B', 'C', 'D'][idx - 1]
+        return f"{marker}) {remainder}" if remainder else f"{marker})"
+
+    text = re.sub(r'(?m)^\s*([A-E1-5])[\.\:-]\s*(\S.*)?', lambda m: normalize_option_prefix(m), text)
+    text = re.sub(r'(?mi)^(Answer)\s*[-–]\s*', r"\1: ", text)
     
     questions = []
     lines = text.split('\n')
@@ -233,25 +253,25 @@ def parse_mcq_text(text):
             # Check if this line starts with "Options:" followed by concatenated options
             # Handle "Options:A) 120%B) 135%C) 150%D) 100%" format
             if re.match(r'^Options?\s*[:：]\s*', line, re.IGNORECASE):
-                # Extract options from this line (remove "Options:" prefix)
                 options_part = re.sub(r'^Options?\s*[:：]\s*', '', line, flags=re.IGNORECASE).strip()
-                # Split concatenated options - handle multiple formats
-                split_options = re.split(r'([A-E]\)|[1-5]\))', options_part, flags=re.IGNORECASE)
+                split_options = re.split(option_marker_pattern, options_part, flags=re.IGNORECASE)
                 if len(split_options) > 3:  # Found multiple options
                     for i in range(1, len(split_options), 2):
                         if i + 1 < len(split_options):
                             opt_marker = split_options[i]
-                            opt_text = split_options[i + 1].strip() if i + 1 < len(split_options) else ""
-                            if opt_marker and opt_text:
+                            opt_text = split_options[i + 1]
+                            option_line = build_option_line(opt_marker, opt_text)
+                            if option_line:
                                 if not current_q.get('options'):
                                     current_q['options'] = []
-                                current_q['options'].append(f"{opt_marker} {opt_text}")
-                                print(f"DEBUG: Extracted option from 'Options:' line: '{opt_marker} {opt_text[:30]}'")
+                                current_q['options'].append(option_line)
+                                print(f"DEBUG: Extracted option from 'Options:' line: '{option_line[:30]}'")
                 else:
-                    # Single option after "Options:" - treat as option line
-                    if not current_q.get('options'):
-                        current_q['options'] = []
-                    current_q['options'].append(options_part)
+                    option_line = build_option_line(None, options_part)
+                    if option_line:
+                        if not current_q.get('options'):
+                            current_q['options'] = []
+                        current_q['options'].append(option_line)
             # Check if this is an answer - handle multiple formats
             # English: "Answer:", "Answer: B", "Answer:B"
             # Hindi: "उत्तर:", "उत्तर: B"
@@ -259,7 +279,7 @@ def parse_mcq_text(text):
             elif (line.startswith('Answer:') or 
                 re.match(r'^(Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9\(\)\s]+)', line, re.IGNORECASE)):
                 # Try to extract answer value (A, B, C, D or 1, 2, 3, 4)
-                answer_capture = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତర|பதில்|ಉತ್ತర)\s*[:=]\s*(.+)', line, re.IGNORECASE)
+                answer_capture = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', line, re.IGNORECASE)
                 normalized_answer = None
                 if answer_capture:
                     answer_fragment = answer_capture.group(1).strip()
@@ -277,6 +297,10 @@ def parse_mcq_text(text):
                             normalized_answer = paren_letter.group(1).upper()
                         elif option_letter:
                             normalized_answer = option_letter.group(1).upper()
+                if normalized_answer and normalized_answer.isdigit():
+                    idx = int(normalized_answer)
+                    if 1 <= idx <= 4:
+                        normalized_answer = ['A', 'B', 'C', 'D'][idx - 1]
                 if normalized_answer:
                     current_q['answer'] = f"Answer: {normalized_answer}"
                 elif answer_capture:
@@ -295,26 +319,28 @@ def parse_mcq_text(text):
                 current_q = None
             # Check if this is an option (A), B), C), D) or 1), 2), 3), 4), 5))
             # More flexible: allow spaces after marker, handle various formats
-            elif re.match(r'^[A-E]\)\s*|^[1-5]\)\s*', line, re.IGNORECASE):
-                # This is an option line - check if it contains multiple concatenated options
-                # Split if line contains multiple option markers like "A) 120%B) 135%C) 150%D) 100%"
-                split_options = re.split(r'([A-E]\)|[1-5]\))', line, flags=re.IGNORECASE)
+            elif re.match(option_line_pattern, line, re.IGNORECASE):
+                split_options = re.split(option_marker_pattern, line, flags=re.IGNORECASE)
                 if len(split_options) > 3:  # Found multiple options in one line
-                    # Reconstruct options
                     for i in range(1, len(split_options), 2):
                         if i + 1 < len(split_options):
                             opt_marker = split_options[i]
-                            opt_text = split_options[i + 1].strip() if i + 1 < len(split_options) else ""
-                            if opt_marker and opt_text:
+                            opt_text = split_options[i + 1]
+                            option_line = build_option_line(opt_marker, opt_text)
+                            if option_line:
                                 if not current_q.get('options'):
                                     current_q['options'] = []
-                                current_q['options'].append(f"{opt_marker} {opt_text}")
-                                print(f"DEBUG: Split concatenated option: '{line[:50]}' -> '{opt_marker} {opt_text[:30]}'")
+                                current_q['options'].append(option_line)
+                                print(f"DEBUG: Split concatenated option: '{line[:50]}' -> '{option_line[:30]}'")
                 else:
-                    # Single option line
-                    if not current_q.get('options'):
-                        current_q['options'] = []
-                    current_q['options'].append(line)
+                    option_match = re.match(r'^([A-E1-5][\)\.:])\s*(.*)', line, re.IGNORECASE)
+                    marker = option_match.group(1) if option_match else None
+                    opt_text = option_match.group(2) if option_match else line
+                    option_line = build_option_line(marker, opt_text)
+                    if option_line:
+                        if not current_q.get('options'):
+                            current_q['options'] = []
+                        current_q['options'].append(option_line)
             # Handle lines that start with just ")" - assign sequential letters A, B, C, D
             # Match ") " with space OR ")180" without space
             elif re.match(r'^\)\s*[^\s]', line):
@@ -333,20 +359,18 @@ def parse_mcq_text(text):
                     # Already have 4 options, might be content - add to parts
                     current_q['parts'].append(line)
             # Check if line contains option markers anywhere (for mixed content)
-            elif re.search(r'\b[A-E]\)\s+|\b[1-5]\)\s+', line, re.IGNORECASE):
-                # Line contains option markers - extract them
-                # Try to split by option markers
-                option_parts = re.split(r'(\b[A-E]\)|\b[1-5]\))', line)
+            elif re.search(option_marker_pattern, line, re.IGNORECASE):
+                option_parts = re.split(option_marker_pattern, line)
                 for i in range(1, len(option_parts), 2):
                     if i < len(option_parts):
-                        opt_marker = option_parts[i].strip()
-                        opt_text = option_parts[i+1].strip() if i+1 < len(option_parts) else ""
-                        if opt_marker and opt_text:
+                        opt_marker = option_parts[i]
+                        opt_text = option_parts[i + 1]
+                        option_line = build_option_line(opt_marker, opt_text)
+                        if option_line:
                             if not current_q.get('options'):
                                 current_q['options'] = []
-                            current_q['options'].append(f"{opt_marker} {opt_text}")
-                # Also add to parts if there's other content
-                if not re.match(r'^[A-E]\)|^[1-5]\)', line, re.IGNORECASE):
+                            current_q['options'].append(option_line)
+                if not re.match(option_line_pattern, line, re.IGNORECASE):
                     current_q['parts'].append(line)
             else:
                 # Add to current question parts (question text or continuation)
@@ -381,9 +405,15 @@ def parse_mcq_text(text):
         if not current_q.get('options') or len(current_q['options']) == 0:
             content_text = current_q.get('content', '')
             # Look for options in content - first try A), B), C), D)
-            options_in_content = re.findall(r'(\b[A-E]\)|\b[1-5]\))\s*([^\n<]+)', content_text, re.IGNORECASE)
+            options_in_content = re.findall(r'([A-E1-5][\)\.:])\s*([^\n<]+)', content_text, re.IGNORECASE)
             if options_in_content and len(options_in_content) >= 2:
-                current_q['options'] = [f"{marker.strip()} {text.strip()}" for marker, text in options_in_content[:5]]
+                formatted_options = []
+                for marker, text_segment in options_in_content[:5]:
+                    option_line = build_option_line(marker, text_segment)
+                    if option_line:
+                        formatted_options.append(option_line)
+                if formatted_options:
+                    current_q['options'] = formatted_options
             else:
                 # Fallback: look for lines that start with just ")" - assign letters
                 # Remove HTML tags first to get plain text, replace <br> with newline
@@ -429,6 +459,35 @@ def parse_mcq_text(text):
         print("=== END DEBUG ===\n")
     
     return questions if questions else None
+
+option_marker_pattern = r'([A-E][\)\.:]|[1-5][\)\.:])'
+option_line_pattern = r'^[A-E1-5][\)\.:]\s*'
+
+def format_option_marker(raw_marker):
+    if not raw_marker:
+        return None
+    marker = raw_marker.strip()
+    if not marker:
+        return None
+    letter_match = re.match(r'([A-E])', marker, re.IGNORECASE)
+    if letter_match:
+        return f"{letter_match.group(1).upper()})"
+    number_match = re.match(r'([1-5])', marker)
+    if number_match:
+        idx = int(number_match.group(1))
+        if 1 <= idx <= 4:
+            return f"{['A','B','C','D'][idx-1]})"
+        return f"{number_match.group(1)})"
+    return None
+
+def build_option_line(marker, text):
+    opt_text = (text or "").strip()
+    if not opt_text:
+        return None
+    normalized_marker = format_option_marker(marker)
+    if normalized_marker:
+        return f"{normalized_marker} {opt_text}"
+    return opt_text
 
 async def save_pdf_playwright(text, outpath, lang):
     """Save PDF using Playwright for better Indic font support"""
@@ -782,9 +841,11 @@ if __name__ == "__main__":
         raise ValueError("Invalid choice! Please select a valid option.")
     
     lang = languages[choice - 1]
+    topic = input("\n🎯 Enter a topic to focus on (leave blank for general questions): ").strip()
+    topic = topic if topic else None
     
     print("\n🧠 Generating MCQs using Gemini 2.5 Pro... please wait\n")
-    mcqs = generate_mcqs(pdf_path, num_qs, lang)
+    mcqs = generate_mcqs(pdf_path, num_qs, lang, topic=topic)
 
     if mcqs:
         output_pdf = f"Generated_MCQs_{lang}.pdf"
