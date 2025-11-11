@@ -117,90 +117,63 @@ CRITICAL FOR {language.upper()} FORMATTING:
 
     prompt = f"""You are an expert exam question generator. Read the following document carefully and generate exactly {n} NEW MCQs.{topic_instruction}
 
-CRITICAL FORMATTING RULES - FOLLOW EXACTLY:
-1. Write questions and options in {language} language
-2. Use ONLY English labels: "Answer:" (NOT "उत्तर:" or "సమాధానం" or any other language label)
-3. Each question MUST have exactly 4 options with English letters: A, B, C, D
-4. Format each question EXACTLY like this example (copy this format EXACTLY):
+CRITICAL FORMATTING RULES - FOLLOW EXACTLY OR FAIL:
+1. Write questions and options completely in {language} language
+2. Use ONLY English letters A), B), C), D) for options - NEVER use Hindi numbers or symbols
+3. Use ONLY "Answer: X" where X is A, B, C, or D - NEVER write answers in Hindi
+4. Each question MUST follow this EXACT format:
 
-1. [Question text in {language}]
-A) [Option A text in {language}]
-B) [Option B text in {language}]
-C) [Option C text in {language}]
-D) [Option D text in {language}]
+1. [Question text in {language} ending with ?]
+A) [Option A in {language}]
+B) [Option B in {language}] 
+C) [Option C in {language}]
+D) [Option D in {language}]
 Answer: B
 
-2. [Next question text in {language}]
-A) [Option A text in {language}]
-B) [Option B text in {language}]
-C) [Option C text in {language}]
-D) [Option D text in {language}]
+2. [Next question text in {language} ending with ?]
+A) [Option A in {language}]
+B) [Option B in {language}]
+C) [Option C in {language}]
+D) [Option D in {language}]
 Answer: C
 
-[Continue for all {n} questions...]
+ABSOLUTELY FORBIDDEN:
+- DO NOT use Hindi numbers १, २, ३, ४ for options
+- DO NOT use Hindi markers अ, आ, इ, ई for options  
+- DO NOT write "उत्तर:" or any non-English answer label
+- DO NOT put multiple options on one line
+- DO NOT forget the question mark at the end
 
-MANDATORY REQUIREMENTS:
-- Start each question with a number followed by a period (1., 2., 3., etc.)
-- EVERY option MUST start with English letter followed by closing parenthesis: A) B) C) D)
-- DO NOT use just ")" without A, B, C, D
-- DO NOT use numbers 1), 2), 3), 4) - ONLY use A), B), C), D)
-- ALWAYS use "Answer: X" format where X is A, B, C, or D (NOT any other format)
-- Write only one question per line
-- Each option on its own line (A) on one line, B) on next line, etc.)
-- Use proper spacing between questions and options
-- For Indic languages like Telugu, Hindi, Odia: ensure proper spacing between words
-- Keep questions concise and professionally written
-- Base questions strictly on the document content below
-
-CRITICAL:
-- You MUST use ONLY English letters A), B), C), D) for the option labels
-- You MUST use ONLY the English phrase "Answer: X" where X is A, B, C, or D
-- DO NOT translate the option markers or the word "Answer" into any other language
-- The question text and option text should be in {language}, but the labels must remain in English
-
-EXAMPLE FORMAT - COPY EXACTLY:
-1. What is 2+2?
-A) 3
-B) 4
-C) 5
-D) 6
-Answer: B
-
-2. What is the capital of France?
-A) London
-B) Berlin
-C) Paris
-D) Madrid
-Answer: C
-
-EXAMPLE FOR HINDI:
+EXAMPLE FOR HINDI - COPY THIS FORMAT EXACTLY:
 1. दो और दो का योग क्या है?
 A) 3
 B) 4
 C) 5
 D) 6
-Answer: B{hindi_analogy_example}
-
-EXAMPLE FOR ODIA:
-1. ଦୁଇ ଏବଂ ଦୁଇର ଯୋଗଫଳ କ'ଣ?
-A) 3
-B) 4
-C) 5
-D) 6
 Answer: B
 
-{special_formatting_block}
+2. भारत की राजधानी क्या है?
+A) मुंबई
+B) दिल्ली
+C) कोलकाता
+D) चेन्नई
+Answer: B
 
 Document content:
-{pdf_text[:10000]}
+{pdf_text[:8000]}
 
 Now generate {n} MCQs following the format above EXACTLY. Remember:
-- Use A), B), C), D) for options (NOT just ) or 1), 2), 3), 4))
-- Use "Answer: X" format with English label!"""
+- Use ONLY A), B), C), D) for options
+- Use ONLY "Answer: X" format with English label!
+- Every question must end with a question mark?"""
 
     model = genai.GenerativeModel("gemini-2.5-pro")
     response = model.generate_content(prompt)
     text = response.text
+
+    if language.lower() in ["hindi", "odia"]:
+        text = correct_gemini_output(text, language)
+
     print(f"\n=== RAW GEMINI OUTPUT ({language}) ===")
     print(text)
     print("=== END RAW OUTPUT ===\n")
@@ -213,6 +186,75 @@ Now generate {n} MCQs following the format above EXACTLY. Remember:
         print(f"Warning: failed to save raw Gemini output: {e}")
     
     return text
+
+
+def correct_gemini_output(text, language):
+    """Post-process Gemini output to fix common formatting issues"""
+    if not text:
+        return text
+
+    print("=== APPLYING POST-PROCESSING CORRECTIONS ===")
+
+    lines = text.split('\n')
+    corrected_lines = []
+
+    hindi_to_english = {
+        '१': 'A', '२': 'B', '३': 'C', '४': 'D',
+        '୧': 'A', '୨': 'B', '୩': 'C', '୪': 'D',
+        '1': 'A', '2': 'B', '3': 'C', '4': 'D'
+    }
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+
+        line = re.sub(r'^(\d+)\.[\s\u200b]*', r'\1. ', line)
+
+        for marker, letter in hindi_to_english.items():
+            line = re.sub(rf'^{marker}\)', f'{letter})', line)
+            line = re.sub(rf'\s{marker}\)', f' {letter})', line)
+
+        if re.match(r'^(उत्तर|ଉତ୍ତର|समाधान)\s*[:：]\s*', line):
+            answer_part = re.sub(r'^(उत्तर|ଉତ୍ତର|समाधान)\s*[:：]\s*', '', line)
+            replaced = False
+            for marker, letter in hindi_to_english.items():
+                if marker in answer_part:
+                    line = f"Answer: {letter}"
+                    replaced = True
+                    break
+            if not replaced:
+                letter_match = re.search(r'([A-D])', answer_part, re.IGNORECASE)
+                if letter_match:
+                    line = f"Answer: {letter_match.group(1).upper()}"
+
+        if corrected_lines:
+            prev_line = corrected_lines[-1].strip()
+            if (re.match(r'^\d+\.', prev_line) and line and len(line) > 2 and
+                    not re.match(r'^[A-D]\)', line) and not re.match(r'^\d+\.', line) and
+                    'Answer:' not in line):
+                option_count = 0
+                for j in range(len(corrected_lines) - 1, -1, -1):
+                    if re.match(r'^\d+\.', corrected_lines[j]):
+                        break
+                    if re.match(r'^[A-D]\)', corrected_lines[j]):
+                        option_count += 1
+                if option_count < 4:
+                    next_letter = chr(65 + option_count)
+                    line = f"{next_letter}) {line}"
+                    print(f"Corrected missing option marker: {line[:50]}")
+
+        corrected_lines.append(line)
+        i += 1
+
+    corrected_text = '\n'.join(corrected_lines)
+    corrected_text = re.sub(r'(\d+\.)([^\s])', r'\1 \2', corrected_text)
+    corrected_text = re.sub(r'([A-D]\))([^\s])', r'\1 \2', corrected_text)
+
+    print("=== CORRECTIONS APPLIED ===")
+    return corrected_text
 
 def generate_topic_mcqs(topic: str, n: int, language: str):
     if not topic:
@@ -332,160 +374,217 @@ def clean_text_html(s):
     return s.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").strip()
 
 def parse_mcq_text(text):
-    """Parse MCQ text into structured format - improved for Indic languages"""
-    print(f"\n=== DEBUG: Raw text from Gemini (first 1000 chars) ===")
-    preview = (text or "")[:1000]
-    print(preview)
+    """Parse MCQ text into structured format - completely rewritten for Hindi/Odia support"""
+    print(f"\n=== DEBUG: Raw Gemini Output ===")
+    print((text or "")[:1500])
     print("=== END DEBUG ===\n")
 
-    if not text:
-        return None
+    if not text or text.strip() == "":
+        print("ERROR: Empty text received from Gemini")
+        return []
+
+    hindi_char_count = len(re.findall(r'[\u0900-\u097F]', text))
+    if hindi_char_count > len(text) * 0.3:
+        print("Detected Hindi text with potential formatting issues, applying enhanced parsing...")
+        text = re.sub(r'(\d+)\.\s*', r'\n\1. ', text)
+        text = re.sub(r'([A-D])\)\s*', r'\n\1) ', text)
 
     text = normalize_unicode_digits(text)
 
-    # Normalize analogy style constructs
-    text = re.sub(r'(\d+)\.\s*([^:?]+)\s*:\s*([^:?]+)\s*::\s*([^:?]+)\s*:\s*\?', r'\1. \2 : \3 :: \4 : ?', text)
-
-    # Encourage line breaks before numbered questions and tidy answer markers
-    text = re.sub(r'(\d+)[\.\)]\s+', lambda m: f"\n{normalize_number_str(m.group(1))}. ", text)
-    text = re.sub(r'(?mi)^(Answer)\s*[-–]\s*', r"\\1: ", text)
-
-    lines = [ln.strip() for ln in text.split('\n') if ln.strip()]
+    text = re.sub(r'(\d+)\.\s*([^:\n?]+)\s*:\s*([^:\n?]+)\s*::\s*([^:\n?]+)\s*:\s*\?', r'\1. \2 : \3 :: \4 : ?', text)
+    text = re.sub(r'Options?\s*[:：]\s*', 'Options: ', text, flags=re.IGNORECASE)
+    text = re.sub(r'Answer\s*[:：]\s*', 'Answer: ', text, flags=re.IGNORECASE)
 
     questions = []
+    lines = text.split('\n')
+
     current_q = None
+    question_counter = 0
 
-    def finalize_current():
-        nonlocal current_q
-        if not current_q:
-            return
-        extras = current_q.pop('_extra', [])
-        if extras:
-            current_q['content'] = (current_q.get('content') or '') + '<br>' + '<br>'.join(extras)
-        if current_q.get('options'):
-            current_q['options'] = normalize_option_list(current_q['options'])
-        answer_val = current_q.get('answer')
-        if answer_val and not answer_val.startswith('Answer:'):
-            normalized = normalize_answer_value(answer_val)
-            current_q['answer'] = f"Answer: {normalized}" if normalized else f"Answer: {answer_val}"
-        questions.append(current_q)
-        if current_q.get('options'):
-            print(f"DEBUG: Question {current_q['number']} has {len(current_q['options'])} options: {current_q['options']}")
-        if current_q.get('answer'):
-            print(f"DEBUG: Question {current_q['number']} answer: {current_q['answer']}")
-        current_q = None
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
 
-    local_marker_map = {
-        '१': 'A', '२': 'B', '३': 'C', '४': 'D',
-        'अ': 'A', 'आ': 'B', 'इ': 'C', 'ई': 'D',
-        'क': 'A', 'ख': 'B', 'ग': 'C', 'घ': 'D',
-        'ଅ': 'A', 'ଆ': 'B', 'ଇ': 'C', 'ଈ': 'D',
-        '୧': 'A', '୨': 'B', '୩': 'C', '୪': 'D'
-    }
+        print(f"DEBUG Line {i}: '{line[:60]}'")
 
-    for line in lines:
-        print(f"DEBUG: Processing line: '{line[:60]}'")
+        question_found = False
+        match = re.match(r'^(\d+)[\.\)]\s*(.*\?)\s*$', line)
+        if match:
+            question_found = True
+            q_num = match.group(1)
+            q_text = match.group(2)
+
+        if not match:
+            match = re.match(r'^Q\s*(\d+)[\.\)]\s*(.*\?)\s*$', line, re.IGNORECASE)
+            if match:
+                question_found = True
+                q_num = match.group(1)
+                q_text = match.group(2)
+
+        if not match and re.match(r'^\d+\.', line) and '?' in line:
+            parts = line.split('?', 1)
+            if len(parts) > 1:
+                q_text = parts[0] + '?'
+                q_num = re.match(r'^(\d+)\.', line).group(1)
+                question_found = True
+
+        if question_found:
+            if current_q:
+                questions.append(current_q)
+
+            question_counter += 1
+            current_q = {
+                'number': str(question_counter),
+                'content': q_text.strip(),
+                'options': [],
+                'answer': None,
+                'raw_number': q_num
+            }
+            print(f"DEBUG: Started question {q_num}: {q_text[:50]}...")
+            i += 1
+            continue
 
         if current_q:
-            # Detect answers in multiple languages
-            answer_prefix_match = re.match(r'^(Answer|उत्तर|ଉତ୍ତର|ସମାଧାନ|समाधान)\s*[:=]\s*(.+)$', line, re.IGNORECASE)
-            if answer_prefix_match:
-                answer_fragment = answer_prefix_match.group(2).strip()
-                normalized = normalize_answer_value(answer_fragment)
-                current_q['answer'] = f"Answer: {normalized}" if normalized else f"Answer: {answer_fragment}"
-                print(f"DEBUG: Found answer: {current_q['answer']}")
-                finalize_current()
+            option_match = re.match(r'^([A-D])\)\s*(.+)$', line, re.IGNORECASE)
+            if option_match:
+                marker = option_match.group(1).upper()
+                option_text = option_match.group(2).strip()
+                current_q['options'].append(f"{marker}) {option_text}")
+                print(f"DEBUG: Added option {marker})")
+                i += 1
                 continue
 
-            if 'Answer' in line and len(line) < 50:
-                fallback_match = re.search(r'Answer\s*[:=]\s*([A-D])', line, re.IGNORECASE)
-                if fallback_match:
-                    answer_letter = fallback_match.group(1).upper()
+            alt_option_match = re.match(r'^\(([A-D])\)\s*(.+)$', line, re.IGNORECASE)
+            if alt_option_match:
+                marker = alt_option_match.group(1).upper()
+                option_text = alt_option_match.group(2).strip()
+                current_q['options'].append(f"{marker}) {option_text}")
+                print(f"DEBUG: Added alt option {marker})")
+                i += 1
+                continue
+
+            if re.search(r'[A-D]\)\s*[^A-D]', line) and len(current_q['options']) < 4:
+                options_found = re.findall(r'([A-D])\)\s*([^A-D\)]+)', line)
+                for marker, opt_text in options_found:
+                    if len(current_q['options']) < 4:
+                        current_q['options'].append(f"{marker.upper()}) {opt_text.strip()}")
+                        print(f"DEBUG: Split option {marker}) from concatenated line")
+                i += 1
+                continue
+
+            if re.match(r'^(Answer|उत्तर|ଉତ୍ତର|समाधान)\s*[:=]\s*', line, re.IGNORECASE):
+                answer_text = re.sub(r'^(Answer|उत्तर|ଉତ୍ତର|समाधान)\s*[:=]\s*', '', line, flags=re.IGNORECASE).strip()
+
+                answer_letter = None
+                letter_match = re.search(r'([A-D])', answer_text, re.IGNORECASE)
+                if letter_match:
+                    answer_letter = letter_match.group(1).upper()
+                else:
+                    hindi_map = {'१': 'A', '२': 'B', '३': 'C', '४': 'D',
+                                 '1': 'A', '2': 'B', '3': 'C', '4': 'D'}
+                    for num, letter in hindi_map.items():
+                        if num in answer_text:
+                            answer_letter = letter
+                            break
+
+                if answer_letter:
                     current_q['answer'] = f"Answer: {answer_letter}"
-                    print(f"DEBUG: Found fallback answer: {current_q['answer']}")
-                    finalize_current()
-                    continue
+                    print(f"DEBUG: Found answer: {current_q['answer']}")
+                else:
+                    current_q['answer'] = f"Answer: {answer_text}"
 
-            # English-labelled options
-            english_option = re.match(r'^([A-D])\)\s+(.+)$', line, re.IGNORECASE)
-            if english_option:
-                marker = english_option.group(1).upper()
-                option_text = english_option.group(2).strip()
-                current_q.setdefault('options', []).append(f"{marker}) {option_text}")
-                print(f"DEBUG: Added option {marker}) {option_text[:40]}")
+                questions.append(current_q)
+                current_q = None
+                i += 1
                 continue
 
-            # Numeric options (1) -> A) etc.
-            digit_option = re.match(r'^([1-4])\)\s+(.+)$', line)
-            if digit_option:
-                digit_marker = digit_option.group(1)
-                option_text = digit_option.group(2).strip()
-                mapped = DIGIT_TO_LETTER.get(digit_marker, 'A')
-                current_q.setdefault('options', []).append(f"{mapped}) {option_text}")
-                print(f"DEBUG: Converted digit option {digit_marker}) to {mapped})")
-                continue
+            if line and len(current_q['options']) < 4 and not re.match(r'^\d+\.', line):
+                next_letter = chr(65 + len(current_q['options']))
+                current_q['options'].append(f"{next_letter}) {line}")
+                print(f"DEBUG: Added fallback option {next_letter})")
 
-            # Hindi/Odia markers that need conversion
-            local_option = re.match(r'^([\u0966-\u096f\u0b66-\u0b6fअआइईକଖଗଘଅଆଇଈ])\s*[\)\.:]\s*(.+)$', line)
-            if local_option:
-                local_marker = local_option.group(1)
-                option_text = local_option.group(2).strip()
-                normalized_marker = local_marker_map.get(local_marker)
-                if not normalized_marker:
-                    normalized_marker = DIGIT_TO_LETTER.get(normalize_unicode_digits(local_marker), 'A')
-                current_q.setdefault('options', []).append(f"{normalized_marker}) {option_text}")
-                print(f"DEBUG: Converted local option {local_marker} to {normalized_marker})")
-                continue
+        i += 1
 
-            # Fallback bullet/paragraph options
-            fallback_option = try_extract_option_line(line, len(current_q.get('options', [])))
-            if fallback_option:
-                current_q.setdefault('options', []).append(fallback_option)
-                print(f"DEBUG: Extracted fallback option: {fallback_option[:40]}")
-                continue
+    if current_q:
+        questions.append(current_q)
 
-            current_q.setdefault('_extra', []).append(line)
+    for q in questions:
+        q['options'] = [opt.strip() for opt in q.get('options', []) if opt.strip()]
+        if q.get('answer') and not q['answer'].startswith('Answer:'):
+            q['answer'] = 'Answer: ' + q['answer']
+
+    print(f"\n=== FINAL PARSED {len(questions)} QUESTIONS ===")
+    for q in questions:
+        print(f"Q{q['number']}: {q['content'][:60]}...")
+        print(f"  Options: {len(q.get('options', []))}")
+        for opt in q.get('options', []):
+            print(f"    {opt[:40]}...")
+        print(f"  Answer: {q.get('answer', 'None')}")
+        print()
+
+    if not questions and re.search(r'[\u0900-\u097F]', text or ''):
+        print("Main parser failed, trying emergency Hindi parser...")
+        questions = emergency_parse_hindi_mcqs(text)
+
+    return questions if questions else []
+
+
+def emergency_parse_hindi_mcqs(text):
+    """Emergency parser for when the main parser fails with Hindi/Odia text"""
+    print("=== USING EMERGENCY PARSER ===")
+
+    questions = []
+    lines = (text or '').split('\n')
+
+    current_question = None
+    question_number = 1
+
+    marker_map = {'1': 'A', '2': 'B', '3': 'C', '4': 'D',
+                  '१': 'A', '२': 'B', '३': 'C', '४': 'D',
+                  '୧': 'A', '୨': 'B', '୩': 'C', '୪': 'D'}
+
+    for line in lines:
+        clean = line.strip()
+        if not clean:
             continue
 
-        # No active question - attempt to detect new question lines
-        question_match = re.match(r'^(?:प्रश्न|Question)?\s*(\d+)[\.)]\s*(.+)$', line, re.IGNORECASE)
-        if question_match:
-            q_num = normalize_number_str(question_match.group(1)) or str(len(questions) + 1)
-            q_body = question_match.group(2).strip()
-            current_q = {
-                'number': q_num,
-                'content': q_body,
+        if re.match(r'^\d+\.', clean) and '?' in clean:
+            if current_question:
+                questions.append(current_question)
+            current_question = {
+                'number': str(question_number),
+                'content': clean,
                 'options': [],
-                'answer': None,
-                '_extra': []
+                'answer': None
             }
-            print(f"DEBUG: Found question {q_num}")
+            question_number += 1
             continue
 
-        # Handle question style with explicit word prefix first
-        question_word_match = re.match(r'^(?:प्रश्न|Question)\s*(\d+)\s*[:\-]\s*(.+)$', line, re.IGNORECASE)
-        if question_word_match:
-            q_num = normalize_number_str(question_word_match.group(1)) or str(len(questions) + 1)
-            q_body = question_word_match.group(2).strip()
-            current_q = {
-                'number': q_num,
-                'content': q_body,
-                'options': [],
-                'answer': None,
-                '_extra': []
-            }
-            print(f"DEBUG: Found question {q_num} via word prefix")
+        if current_question and len(current_question['options']) < 4:
+            option_match = re.match(r'^([A-D1-4१२३४୧୨୩୪])[\)\.\-]\s*(.+)', clean)
+            if option_match:
+                marker = option_match.group(1)
+                option_text = option_match.group(2)
+                normalized = marker_map.get(normalize_unicode_digits(marker), 'A')
+                current_question['options'].append(f"{normalized}) {option_text}")
+                continue
+
+        if current_question and re.search(r'(Answer|उत्तर|ଉତ୍ତର)\s*[:=]', clean, re.IGNORECASE):
+            answer_match = re.search(r'[:=]\s*([A-D1-4१२३४୧୨୩୪])', clean)
+            if answer_match:
+                marker = answer_match.group(1)
+                normalized = marker_map.get(normalize_unicode_digits(marker), 'A')
+                current_question['answer'] = f"Answer: {normalized}"
             continue
 
-    finalize_current()
+    if current_question:
+        questions.append(current_question)
 
-    if questions:
-        print(f"\n=== DEBUG: Parsed {len(questions)} questions ===")
-        for q in questions[:3]:
-            print(f"Q{q['number']}: options={len(q.get('options', []))}, answer={q.get('answer')}")
-        print("=== END DEBUG ===\n")
-
-    return questions if questions else None
+    print(f"Emergency parser found {len(questions)} questions")
+    return questions
 
 option_marker_pattern = r'(([A-D]|[1-4])\))'
 option_line_pattern = r'^[A-D1-4][\)\.:]\s+'
