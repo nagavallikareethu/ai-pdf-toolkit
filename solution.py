@@ -425,7 +425,7 @@ Return only 2-line explanation text.
                 is_valid = (
                     (has_question_words or is_pattern_question) and
                     (has_question_mark or has_options or is_pattern_question) and
-                    len(q_text) >= (20 if is_pattern_question else 15)
+                    len(q_text) >= (20 if is_pattern_question else 8)
                 )
                 
                 # Skip if not valid
