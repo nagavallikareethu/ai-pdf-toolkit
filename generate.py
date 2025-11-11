@@ -376,6 +376,7 @@ def parse_mcq_text(text):
                 # End this question
                 if current_q['parts']:
                     current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
+                current_q['options'] = normalize_option_list(current_q.get('options'))
                 questions.append(current_q)
                 current_q = None
             # Check if this is an option (A), B), C), D) or 1), 2), 3), 4), 5))
@@ -502,14 +503,18 @@ def parse_mcq_text(text):
         # Try to extract answer from content if not found separately
         if not current_q.get('answer'):
             content_text = current_q.get('content', '')
-            # Look for answer in content
+            # Try to find answer in content
             answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*([A-Z0-9]+)', content_text, re.IGNORECASE)
             if answer_in_content:
                 ans_val = answer_in_content.group(1)
                 ans_val_norm = normalize_number_str(ans_val)
                 if ans_val_norm.isdigit() and ans_val_norm in DIGIT_TO_LETTER:
                     ans_val = DIGIT_TO_LETTER[ans_val_norm]
-                current_q['answer'] = f"Answer: {ans_val}"
+                q['answer'] = f"Answer: {ans_val}"
+            else:
+                # Answer not found at all
+                q_html += f'<div class="answer" style="color: #999;">Answer: Not provided</div>'
+        current_q['options'] = normalize_option_list(current_q.get('options'))
         questions.append(current_q)
     
     # Debug: print what was parsed
@@ -562,6 +567,39 @@ def build_option_line(marker, text):
     if normalized_marker:
         return f"{normalized_marker} {opt_text}"
     return opt_text
+
+def normalize_option_list(option_list):
+    if not option_list:
+        return []
+    normalized = []
+    letters = ['A', 'B', 'C', 'D', 'E']
+    for idx, opt in enumerate(option_list):
+        opt_str = str(opt or '').strip()
+        if not opt_str:
+            continue
+        body = opt_str
+        marker = letters[idx] if idx < len(letters) else letters[0]
+        match_letter = re.match(r'^([A-E])\)\s*(.*)', opt_str, re.IGNORECASE)
+        match_digit = re.match(r'^([0-9])\)\s*(.*)', opt_str)
+        if match_letter:
+            existing = match_letter.group(1).upper()
+            body_candidate = match_letter.group(2).strip()
+            if idx < len(letters) and existing == letters[idx]:
+                marker = existing
+            body = body_candidate
+        elif match_digit:
+            normalized_num = normalize_number_str(match_digit.group(1))
+            body_candidate = match_digit.group(2).strip()
+            if normalized_num in DIGIT_TO_LETTER:
+                marker = DIGIT_TO_LETTER[normalized_num]
+            body = body_candidate
+        else:
+            stripped = re.sub(r'^\)*\s*', '', opt_str).strip()
+            if stripped:
+                body = stripped
+        if body:
+            normalized.append(f"{marker}) {body}")
+    return normalized
 
 async def save_pdf_playwright(text, outpath, lang):
     """Save PDF using Playwright for better Indic font support"""
