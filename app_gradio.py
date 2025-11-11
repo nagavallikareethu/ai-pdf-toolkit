@@ -171,7 +171,7 @@ def run_solution(pdf_path: str, target_lang: str) -> Tuple[str, Optional[str]]:
         return error_msg, None
 
 
-def run_mcq_generation(pdf_path: str, num_mcqs: int, target_lang: str) -> Tuple[str, Optional[str]]:
+def run_mcq_generation(pdf_path: str, num_mcqs: int, target_lang: str, topic: Optional[str]) -> Tuple[str, Optional[str]]:
     """
     Run MCQ generation module
     Returns: (status_message, output_file_path)
@@ -182,8 +182,9 @@ def run_mcq_generation(pdf_path: str, num_mcqs: int, target_lang: str) -> Tuple[
         output_dir = PROJECT_ROOT / "outputs"
         output_dir.mkdir(exist_ok=True)
         
-        progress_msg = f"Generating {num_mcqs} MCQs using Gemini...\n"
-        mcqs = generate.generate_mcqs(pdf_path, num_mcqs, target_lang)
+        topic_note = f" on topic '{topic}'" if topic else ""
+        progress_msg = f"Generating {num_mcqs} MCQs{topic_note} using Gemini...\n"
+        mcqs = generate.generate_mcqs(pdf_path, num_mcqs, target_lang, topic=topic)
         
         if not mcqs:
             return "No MCQs were generated.", None
@@ -237,7 +238,7 @@ def process_solution(pdf_file, target_lang):
     return run_solution(str(pdf_path), target_lang)
 
 
-def process_mcq_generation(pdf_file, num_mcqs, target_lang):
+def process_mcq_generation(pdf_file, num_mcqs, target_lang, topic_choice, topic_custom):
     """Process MCQ generation request"""
     if pdf_file is None:
         return "Please upload a PDF file first.", None
@@ -247,8 +248,17 @@ def process_mcq_generation(pdf_file, num_mcqs, target_lang):
     work_dir.mkdir(exist_ok=True)
     pdf_path = save_uploaded_file(pdf_file, work_dir)
     
+    topic_custom = (topic_custom or "").strip()
+    topic_choice = (topic_choice or "").strip()
+    if topic_custom:
+        chosen_topic = topic_custom
+    elif topic_choice and topic_choice.lower() != "auto (use pdf context)":
+        chosen_topic = topic_choice
+    else:
+        chosen_topic = None
+    
     # Run MCQ generation
-    return run_mcq_generation(str(pdf_path), num_mcqs, target_lang)
+    return run_mcq_generation(str(pdf_path), num_mcqs, target_lang, chosen_topic)
 
 
 # =============================================================================
@@ -364,6 +374,27 @@ def create_interface():
                             label="Number of MCQs",
                             info="How many questions to generate"
                         )
+                        mcq_topic_choice = gr.Dropdown(
+                            choices=[
+                                "Auto (use PDF context)",
+                                "Quantitative Aptitude",
+                                "Reasoning Ability",
+                                "English Language & Grammar",
+                                "General Awareness",
+                                "Computer Knowledge",
+                                "Banking Awareness",
+                                "Current Affairs"
+                            ],
+                            value="Auto (use PDF context)",
+                            label="Preferred Topic",
+                            info="Pick a section to focus on or leave as auto"
+                        )
+                        mcq_topic_custom = gr.Textbox(
+                            label="Custom Topic (optional)",
+                            placeholder="e.g., Data Interpretation, Simplification",
+                            info="Overrides the dropdown when filled",
+                            lines=1
+                        )
                         mcq_btn = gr.Button("Generate MCQs", variant="primary", size="lg")
                         
                         mcq_output_msg = gr.Textbox(
@@ -377,7 +408,7 @@ def create_interface():
                         
                         mcq_btn.click(
                             fn=process_mcq_generation,
-                            inputs=[pdf_input, mcq_count, mcq_lang],
+                            inputs=[pdf_input, mcq_count, mcq_lang, mcq_topic_choice, mcq_topic_custom],
                             outputs=[mcq_output_msg, mcq_output_file]
                         )
         
