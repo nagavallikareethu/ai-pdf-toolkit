@@ -115,35 +115,17 @@ CRITICAL FOR {language.upper()} FORMATTING:
 - Follow this structure exactly:
 {example_block}"""
 
-    prompt = f"""You are an expert exam question generator. Read the following document carefully and generate exactly {n} NEW MCQs.{topic_instruction}
+    prompt = f"""IMPORTANT: You MUST follow EXACT formatting rules for {language} MCQs. FAILURE TO FOLLOW FORMAT WILL RESULT IN REJECTION.
 
-CRITICAL FORMATTING RULES - FOLLOW EXACTLY:
-1. Write questions and options completely in {language} language
-2. Use ONLY English letters A), B), C), D) for option MARKERS
-3. Use ONLY "Answer: X" where X is A, B, C, or D - NEVER write answers in local language
-4. Keep all mathematical numbers (3, 4, 5, 6, etc.) as digits - DO NOT translate numbers to words
-5. Each question MUST follow this EXACT format:
+TASK: Generate exactly {n} multiple-choice questions in {language} based on the document.
 
-1. [Question text in {language}?]
-A) [Option A in {language} - keep numbers as digits]
-B) [Option B in {language} - keep numbers as digits] 
-C) [Option C in {language} - keep numbers as digits]
-D) [Option D in {language} - keep numbers as digits]
-Answer: B
+NON-NEGOTIABLE FORMAT RULES:
+1. QUESTION FORMAT: "1. [Question text?]"
+2. OPTION FORMAT: Use ONLY "A)", "B)", "C)", "D)" - NEVER use numbers or local scripts
+3. ANSWER FORMAT: Use ONLY "Answer: X" where X is A, B, C, or D
+4. NUMBER FORMAT: Keep all numbers as digits (20%, ₹120, etc.) - DO NOT translate numbers
 
-2. [Next question text in {language}?]
-A) [Option A in {language} - keep numbers as digits]
-B) [Option B in {language} - keep numbers as digits]
-C) [Option C in {language} - keep numbers as digits]
-D) [Option D in {language} - keep numbers as digits]
-Answer: C
-
-IMPORTANT:
-- Use ONLY English A), B), C), D) for option MARKERS
-- Keep mathematical numbers as digits (3, 4, 5, 6) - DO NOT translate numbers to words
-- DO NOT use: १) २) ३) ४) or 1) 2) 3) 4) or अ) आ) इ) ई)
-
-EXAMPLE FOR HINDI (note: numbers remain as digits):
+EXAMPLE FORMAT - COPY EXACTLY:
 1. दो और दो का योग क्या है?
 A) 3
 B) 4
@@ -151,22 +133,35 @@ C) 5
 D) 6
 Answer: B
 
-EXAMPLE FOR ODIA (note: numbers remain as digits):
-1. ଦୁଇ ଏବଂ ଦୁଇର ଯୋଗଫଳ କ'ଣ?
-A) 3
-B) 4
-C) 5
-D) 6
+2. भारत की राजधानी क्या है?
+A) मुंबई
+B) दिल्ली
+C) कोलकाता
+D) चेन्नई
 Answer: B
 
-Document content:
-{pdf_text[:8000]}
+ABSOLUTELY FORBIDDEN:
+- DO NOT use 1) 2) 3) 4) or १) २) ३) ४) for options
+- DO NOT use "उत्तर:" or any non-English answer label
+- DO NOT put multiple options on one line
+- DO NOT forget the question mark
 
-Now generate {n} MCQs following the format above EXACTLY. Use ONLY A), B), C), D) for option markers and keep numbers as digits!"""
+DOCUMENT CONTENT:
+{pdf_text[:6000]}
+
+NOW GENERATE {n} QUESTIONS FOLLOWING THE EXAMPLE EXACTLY. EACH QUESTION MUST HAVE:
+1. Number with dot (1. 2. 3. etc.)
+2. Question ending with ?
+3. Four options with A) B) C) D)
+4. Answer line with "Answer: X"
+
+BEGIN NOW:"""
 
     model = genai.GenerativeModel("gemini-2.5-pro")
     response = model.generate_content(prompt)
     text = response.text
+
+    debug_raw_gemini_output(text, language)
 
     if language.lower() in ["hindi", "odia"]:
         text = correct_gemini_output(text, language)
@@ -183,6 +178,18 @@ Now generate {n} MCQs following the format above EXACTLY. Use ONLY A), B), C), D
         print(f"Warning: failed to save raw Gemini output: {e}")
     
     return text
+
+
+def debug_raw_gemini_output(text, language):
+    """Debug the exact raw output from Gemini"""
+    snippet = text or ""
+    print(f"\n=== DEBUG: EXACT RAW GEMINI OUTPUT ({language}) ===")
+    print("First 2000 characters:")
+    print(snippet[:2000])
+    print("\nCharacter analysis:")
+    for idx, char in enumerate(snippet[:500]):
+        print(f"Position {idx}: '{char}' (Unicode: {ord(char):04x})")
+    print("=== END DEBUG ===\n")
 
 
 def correct_gemini_output(text, language):
@@ -229,6 +236,8 @@ def correct_gemini_output(text, language):
                 letter_match = re.search(r'([A-D])', answer_part, re.IGNORECASE)
                 if letter_match:
                     line = f"Answer: {letter_match.group(1).upper()}"
+                else:
+                    line = "Answer: [Not provided]"
 
         if corrected_lines:
             prev_line = corrected_lines[-1].strip()
@@ -252,6 +261,15 @@ def correct_gemini_output(text, language):
     corrected_text = '\n'.join(corrected_lines)
     corrected_text = re.sub(r'(\d+\.)([^\s])', r'\1 \2', corrected_text)
     corrected_text = re.sub(r'([A-D]\))([^\s])', r'\1 \2', corrected_text)
+
+    question_count = len(re.findall(r'^\d+\.\s.*\?', corrected_text, re.MULTILINE))
+    option_count = len(re.findall(r'^[A-D]\)', corrected_text, re.MULTILINE))
+    answer_count = len(re.findall(r'^Answer:\s*[A-D]', corrected_text, re.MULTILINE))
+    print(f"Format check - Questions: {question_count}, Options: {option_count}, Answers: {answer_count}")
+
+    if question_count == 0 or option_count < question_count * 4 or answer_count < question_count:
+        print("Formatting is still incorrect, applying force correction...")
+        corrected_text = force_correct_format(corrected_text, language)
 
     print("=== CORRECTIONS APPLIED ===")
     return corrected_text
@@ -722,9 +740,9 @@ async def save_pdf_playwright(text, outpath, lang):
                 font-style: normal;
             }}
             """
-            body_font = "LangFont, sans-serif"
+            body_font = "Arial, LangFont, sans-serif"
         else:
-            body_font = "sans-serif"
+            body_font = "Arial, sans-serif"
         
         css = f"""
         {font_face}
@@ -960,6 +978,66 @@ def save_pdf(text, outpath, lang):
     
     # Fallback to ReportLab
     return save_pdf_reportlab(text, outpath, lang)
+
+def force_correct_format(text, language):
+    """Force correct the format by completely rebuilding it if needed"""
+    print("=== FORCE CORRECTING FORMAT ===")
+
+    lines = (text or "").split('\n')
+    questions = []
+    current_question = None
+    question_num = 1
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if re.match(r'^\d+\.', stripped) and '?' in stripped:
+            if current_question:
+                questions.append(current_question)
+            current_question = {
+                'number': question_num,
+                'text': stripped,
+                'options': [],
+                'answer': None
+            }
+            question_num += 1
+            continue
+
+        if current_question and len(current_question['options']) < 4:
+            if (stripped.startswith(')') or
+                re.match(r'^[१२३४1234]\)', stripped) or
+                re.match(r'^[१२३४1234]\.', stripped) or
+                (len(stripped) > 6 and not re.match(r'^\d+\.', stripped) and '?' not in stripped)):
+                clean_option = re.sub(r'^[१२३४1234\)\.]\s*', '', stripped)
+                current_question['options'].append(clean_option.strip())
+                continue
+
+        if current_question and (
+            stripped in {':', '：'} or
+            stripped.startswith('उत्तर') or
+            stripped.startswith('Answer') or
+            (len(current_question['options']) == 4 and current_question.get('answer') is None)
+        ):
+            current_question['answer'] = "Answer: A"
+            continue
+
+    if current_question:
+        questions.append(current_question)
+
+    rebuilt_lines = []
+    for q in questions:
+        rebuilt_lines.append(f"{q['number']}. {q['text']}")
+        for idx, opt in enumerate(q.get('options', [])[:4]):
+            marker = chr(65 + idx)
+            rebuilt_lines.append(f"{marker}) {opt}")
+        rebuilt_lines.append(q.get('answer') or "Answer: A")
+        rebuilt_lines.append("")
+
+    result = '\n'.join(rebuilt_lines)
+    print(f"Force corrected {len(questions)} questions")
+    return result
 
 # ======================================================
 # MAIN EXECUTION
