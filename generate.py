@@ -109,6 +109,38 @@ Now generate {n} MCQs following the format above EXACTLY. Remember:
     
     return text
 
+def generate_topic_mcqs(topic: str, n: int, language: str):
+    if not topic:
+        raise ValueError("Topic is required for topic-only MCQ generation.")
+
+    prompt = f"""You are an expert exam question generator. Create exactly {n} NEW multiple-choice questions focused on the topic: "{topic}".
+
+CRITICAL FORMAT RULES - FOLLOW EXACTLY:
+1. Write questions and options in {language} language
+2. Use ONLY English option labels A), B), C), D)
+3. Use "Answer: X" (English label) for the correct option
+4. Follow the format shown below
+
+1. [Question text in {language}]
+A) [Option A]
+B) [Option B]
+C) [Option C]
+D) [Option D]
+Answer: B
+
+[Continue for all {n} questions.]
+
+ADDITIONAL GUIDELINES:
+- Ensure every question is relevant to "{topic}"
+- Balance difficulty: mix of easy, moderate, and challenging
+- Avoid repeating question stems
+- Keep wording concise and exam-appropriate
+"""
+
+    model = genai.GenerativeModel("gemini-2.5-pro")
+    response = model.generate_content(prompt)
+    return response.text
+
 # ======================================================
 # GET SCRIPT DIRECTORY FOR FONTS
 # ======================================================

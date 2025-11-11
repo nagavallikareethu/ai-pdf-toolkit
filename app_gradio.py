@@ -206,6 +206,39 @@ def run_mcq_generation(pdf_path: str, num_mcqs: int, target_lang: str, topic: Op
         return error_msg, None
 
 
+def run_mcq_generation_topic_only(num_mcqs: int, target_lang: str, topic: str) -> Tuple[str, Optional[str]]:
+    """Generate MCQs purely from a topic without relying on a PDF."""
+    try:
+        import generate
+
+        if not topic:
+            return "Please provide a topic for topic-only generation.", None
+
+        output_dir = PROJECT_ROOT / "outputs"
+        output_dir.mkdir(exist_ok=True)
+
+        progress_msg = f"Generating {num_mcqs} MCQs on topic '{topic}' using Gemini...\n"
+        mcqs = generate.generate_topic_mcqs(topic, num_mcqs, target_lang)
+
+        if not mcqs:
+            return "No MCQs were generated for the requested topic.", None
+
+        progress_msg += "MCQs generated. Saving to PDF...\n"
+        output_pdf = output_dir / f"Generated_MCQs_{target_lang}.pdf"
+        ok = generate.save_pdf(mcqs, str(output_pdf), target_lang)
+
+        if ok and output_pdf.exists():
+            progress_msg += f"MCQ generation complete! File saved to: {output_pdf}\n"
+            return progress_msg, str(output_pdf)
+        else:
+            return "Failed to create PDF.", None
+
+    except Exception as e:
+        import traceback
+        error_msg = f"MCQ Generation Error (Topic Mode):\n{str(e)}\n\n{traceback.format_exc()}"
+        return error_msg, None
+
+
 # =============================================================================
 # Gradio Interface Functions
 # =============================================================================
@@ -238,16 +271,8 @@ def process_solution(pdf_file, target_lang):
     return run_solution(str(pdf_path), target_lang)
 
 
-def process_mcq_generation(pdf_file, num_mcqs, target_lang, topic_choice, topic_custom):
+def process_mcq_generation(pdf_file, num_mcqs, target_lang, topic_choice, topic_custom, mode):
     """Process MCQ generation request"""
-    if pdf_file is None:
-        return "Please upload a PDF file first.", None
-    
-    # Save uploaded file
-    work_dir = PROJECT_ROOT / "temp"
-    work_dir.mkdir(exist_ok=True)
-    pdf_path = save_uploaded_file(pdf_file, work_dir)
-    
     topic_custom = (topic_custom or "").strip()
     topic_choice = (topic_choice or "").strip()
     if topic_custom:
@@ -256,6 +281,21 @@ def process_mcq_generation(pdf_file, num_mcqs, target_lang, topic_choice, topic_
         chosen_topic = topic_choice
     else:
         chosen_topic = None
+
+    mode = (mode or "Use Uploaded PDF").strip()
+
+    if mode == "Topic-only (no PDF)":
+        if not chosen_topic:
+            return "Please select or enter a topic for topic-only generation.", None
+        return run_mcq_generation_topic_only(num_mcqs, target_lang, chosen_topic)
+
+    if pdf_file is None:
+        return "Please upload a PDF file first.", None
+    
+    # Save uploaded file
+    work_dir = PROJECT_ROOT / "temp"
+    work_dir.mkdir(exist_ok=True)
+    pdf_path = save_uploaded_file(pdf_file, work_dir)
     
     # Run MCQ generation
     return run_mcq_generation(str(pdf_path), num_mcqs, target_lang, chosen_topic)
@@ -360,6 +400,12 @@ def create_interface():
                             Create fresh multiple-choice questions based on your PDF content.
                             """
                         )
+                        mcq_mode = gr.Radio(
+                            choices=["Use Uploaded PDF", "Topic-only (no PDF)"],
+                            value="Use Uploaded PDF",
+                            label="Question Source",
+                            info="Select whether to pull questions from the PDF or generate purely by topic"
+                        )
                         mcq_lang = gr.Dropdown(
                             choices=["English", "Telugu", "Hindi", "Odia"],
                             value="English",
@@ -408,7 +454,7 @@ def create_interface():
                         
                         mcq_btn.click(
                             fn=process_mcq_generation,
-                            inputs=[pdf_input, mcq_count, mcq_lang, mcq_topic_choice, mcq_topic_custom],
+                            inputs=[pdf_input, mcq_count, mcq_lang, mcq_topic_choice, mcq_topic_custom, mcq_mode],
                             outputs=[mcq_output_msg, mcq_output_file]
                         )
         
