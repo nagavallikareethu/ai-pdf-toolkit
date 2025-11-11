@@ -192,6 +192,8 @@ def correct_gemini_output(text, language):
 
     print("=== APPLYING POST-PROCESSING CORRECTIONS ===")
 
+    text = fix_missing_option_markers(text)
+
     lines = text.split('\n')
     corrected_lines = []
 
@@ -381,6 +383,32 @@ def normalize_option_list(option_list):
                 continue
         normalized.append(opt_str)
     return normalized
+
+
+def fix_missing_option_markers(text):
+    """Fix options that have just ")" without A,B,C,D markers"""
+    lines = (text or "").split('\n')
+    corrected_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(')') and len(stripped) > 1:
+            option_count = 0
+            for prev in reversed(corrected_lines):
+                prev_stripped = prev.strip()
+                if re.match(r'^\d+\.', prev_stripped):
+                    break
+                if re.match(r'^[A-D]\)', prev_stripped):
+                    option_count += 1
+            if option_count < 4:
+                next_letter = chr(65 + option_count)
+                corrected_line = f"{next_letter}{stripped}"
+                print(f"Fixed missing option marker: '{stripped}' -> '{corrected_line}'")
+                corrected_lines.append(corrected_line)
+                continue
+        corrected_lines.append(line)
+
+    return '\n'.join(corrected_lines)
 
 def clean_text_html(s):
     """Clean text for HTML display"""
