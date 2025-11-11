@@ -72,6 +72,49 @@ D) कक्षा
 Answer: A
 """
 
+    special_formatting_block = ""
+    if language.lower() in ("hindi", "odia"):
+        if language.lower() == "hindi":
+            example_block = """
+1. दो और दो का योग क्या है?
+A) 3
+B) 4  
+C) 5
+D) 6
+Answer: B
+
+2. भारत की राजधानी क्या है?
+A) मुंबई
+B) दिल्ली
+C) कोलकाता
+D) चेन्नई
+Answer: B
+"""
+        else:
+            example_block = """
+1. ଦୁଇ ଏବଂ ଦୁଇର ଯୋଗଫଳ କ'ଣ?
+A) 3
+B) 4  
+C) 5
+D) 6
+Answer: B
+
+2. ଭାରତର ରାଜଧାନୀ କ'ଣ?
+A) ମୁମ୍ବାଇ
+B) ନୟା ଦିଲ୍ଲୀ
+C) କୋଲକାତା
+D) ଚେନ୍ନାଇ
+Answer: B
+"""
+        special_formatting_block = f"""
+CRITICAL FOR {language.upper()} FORMATTING:
+- Write questions and options completely in {language}
+- Use ONLY English letters A), B), C), D) for every option
+- Use ONLY the phrase \"Answer: X\" where X is A, B, C, or D
+- Do NOT translate the option markers or the word \"Answer\"
+- Follow this structure exactly:
+{example_block}"""
+
     prompt = f"""You are an expert exam question generator. Read the following document carefully and generate exactly {n} NEW MCQs.{topic_instruction}
 
 CRITICAL FORMATTING RULES - FOLLOW EXACTLY:
@@ -145,6 +188,8 @@ B) 4
 C) 5
 D) 6
 Answer: B
+
+{special_formatting_block}
 
 Document content:
 {pdf_text[:10000]}
@@ -287,325 +332,159 @@ def clean_text_html(s):
     return s.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").strip()
 
 def parse_mcq_text(text):
-    """Parse MCQ text into structured format - improved version"""
-    # Debug: print raw text to see what Gemini is generating
+    """Parse MCQ text into structured format - improved for Indic languages"""
     print(f"\n=== DEBUG: Raw text from Gemini (first 1000 chars) ===")
-    print(text[:1000])
+    preview = (text or "")[:1000]
+    print(preview)
     print("=== END DEBUG ===\n")
-    
+
+    if not text:
+        return None
+
     text = normalize_unicode_digits(text)
 
+    # Normalize analogy style constructs
     text = re.sub(r'(\d+)\.\s*([^:?]+)\s*:\s*([^:?]+)\s*::\s*([^:?]+)\s*:\s*\?', r'\1. \2 : \3 :: \4 : ?', text)
 
-    # Try to add line breaks where questions start
-    text = re.sub(r'(\d+)\.', r'\n\1.', text)
-    text = re.sub(r'^\s*(\d+)\)', r'\n\1)', text, flags=re.MULTILINE)
-    
-    # Fix concatenated options like "A) 120%B) 135%C) 150%D) 100%" - split them
-    # More aggressive splitting to handle all concatenated patterns
-    
-    # Step 1: Handle "Options:" prefix followed by concatenated options
-    # Match "Options:A)textB)textC)textD)text" or "Options: A)textB)textC)textD)text"
-    def split_options_in_text(match):
-        prefix = match.group(1)
-        options_text = match.group(2)
-        parts = re.split(option_marker_pattern, options_text, flags=re.IGNORECASE)
-        if len(parts) > 3:
-            reconstructed = []
-            for i in range(1, len(parts), 3):
-                if i + 2 < len(parts):
-                    marker = parts[i]
-                    opt_text = parts[i + 2]
-                    reconstructed.append(f"{marker} {opt_text.strip()}")
-            if reconstructed:
-                options_text = '\n'.join(reconstructed)
-                parts = re.split(option_marker_pattern, options_text, flags=re.IGNORECASE)
-        result = []
-        for i in range(1, len(parts), 3):
-            if i + 2 < len(parts):
-                marker = parts[i]
-                text = parts[i + 2]
-                option_line = build_option_line(marker, text)
-                if option_line:
-                    result.append(option_line)
-        return prefix + "\n".join(result) if result else match.group(0)
-    
-    # Apply splitting to lines with "Options:" prefix
-    text = re.sub(r'(Options?\s*[:：]\s*)([A-E]\)[^\n]+)', split_options_in_text, text, flags=re.IGNORECASE)
-    
-    # Step 2: Split concatenated options that appear anywhere (not just after "Options:")
-    def split_concatenated_options(match):
-        full_match = match.group(0)
-        parts = re.split(r'(([A-D]|[1-4])\))', full_match, flags=re.IGNORECASE)
-        result = []
-        for i in range(1, len(parts), 3):
-            if i + 2 < len(parts):
-                marker = parts[i]
-                text = parts[i + 2].strip()
-                if text:
-                    result.append(f"{marker} {text}")
-        return "\n".join(result) if result else full_match
+    # Encourage line breaks before numbered questions and tidy answer markers
+    text = re.sub(r'(\d+)[\.\)]\s+', lambda m: f"\n{normalize_number_str(m.group(1))}. ", text)
+    text = re.sub(r'(?mi)^(Answer)\s*[-–]\s*', r"\\1: ", text)
 
-    lines = text.split('\n')
-    processed_lines = []
-    for line in lines:
-        line = line.strip()
-        option_count = len(re.findall(r'(([A-D]|[1-4])\))', line, re.IGNORECASE))
-        if option_count >= 2:
-            parts = re.split(r'(([A-D]|[1-4])\))', line, flags=re.IGNORECASE)
-            split_parts = []
-            for i in range(1, len(parts), 3):
-                if i + 2 < len(parts):
-                    marker = parts[i]
-                    text_segment = parts[i + 2].strip()
-                    if text_segment:
-                        split_parts.append(f"{marker} {text_segment}")
-            if split_parts:
-                processed_lines.extend(split_parts)
-            else:
-                processed_lines.append(line)
-        else:
-            processed_lines.append(line)
+    lines = [ln.strip() for ln in text.split('\n') if ln.strip()]
 
-    text = '\n'.join(processed_lines)
-
-    def normalize_option_prefix(match):
-        marker = normalize_number_str(match.group(1)).upper()
-        remainder = match.group(2)
-        if marker.isdigit() and marker in DIGIT_TO_LETTER:
-            marker = DIGIT_TO_LETTER[marker]
-        return f"{marker}) {remainder}" if remainder else f"{marker})"
-
-    text = re.sub(
-        r'(?m)^\s*([1-4])\)\s*(.*)',
-        lambda m: f"{DIGIT_TO_LETTER.get(m.group(1), m.group(1))}) {m.group(2).lstrip()}" if DIGIT_TO_LETTER.get(m.group(1)) else m.group(0),
-        text
-    )
-
-    # Try to add line breaks where questions start
-    text = re.sub(r'(?mi)^(Answer)\s*[-–]\s*', r"\1: ", text)
-    
     questions = []
-    lines = text.split('\n')
-    
     current_q = None
-    auto_counter = 0
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        print(f"DEBUG: Processing line: '{line[:50]}'")
-            
-        # Check if this is a question number
-        match = re.match(r'^(?:Q\s*)?(\d+)[\.\)]\s*(.*)', line, re.IGNORECASE)
-        if not match:
-            match = re.match(r'^(?:Question|Que|Qn)\s*(\d+)\s*[:\-]?\s*(.*)', line, re.IGNORECASE)
-        if match:
-            q_number = normalize_number_str(match.group(1))
-            print(f"DEBUG: Found question {q_number}")
-            question_body = match.group(2)
-            if current_q:
-                questions.append(current_q)
-            try:
-                auto_counter = int(q_number)
-            except (ValueError, TypeError):
-                auto_counter += 1
-            current_q = {
-                'number': q_number if q_number else str(auto_counter),
-                'content': question_body,
-                'parts': [],
-                'options': [],
-                'answer': None
-            }
-            continue
-        if current_q is None and re.match(r'^(?:Question|Que|Qn)\b', line, re.IGNORECASE):
-            auto_counter += 1
-            question_text = re.sub(r'^(?:Question|Que|Qn)\b\s*[:\-]?\s*', '', line, flags=re.IGNORECASE)
-            current_q = {
-                'number': str(auto_counter),
-                'content': question_text,
-                'parts': [],
-                'options': [],
-                'answer': None
-            }
-            continue
-        elif current_q:
-            # Check if this line starts with "Options:" followed by concatenated options
-            # Handle "Options:A) 120%B) 135%C) 150%D) 100%" format
-            if re.match(r'^Options?\s*[:：]\s*', line, re.IGNORECASE):
-                print("DEBUG: Found 'Options:' prefix")
-                options_part = re.sub(r'^Options?\s*[:：]\s*', '', line, flags=re.IGNORECASE).strip()
-                split_options = re.split(option_marker_pattern, options_part, flags=re.IGNORECASE)
-                if len(split_options) > 3:  # Found multiple options
-                    for i in range(1, len(split_options), 3):
-                        if i + 2 < len(split_options):
-                            opt_marker = split_options[i]
-                            opt_text = split_options[i + 2]
-                            option_line = build_option_line(opt_marker, opt_text)
-                            if option_line:
-                                if not current_q.get('options'):
-                                    current_q['options'] = []
-                                current_q['options'].append(option_line)
-                                print(f"DEBUG: Extracted option from 'Options:' line: '{option_line[:30]}'")
-                else:
-                    option_line = build_option_line(None, options_part)
-                    if option_line:
-                        if not current_q.get('options'):
-                            current_q['options'] = []
-                        current_q['options'].append(option_line)
-            # Check if this is an answer - handle multiple formats
-            elif (line.startswith('Answer:') or 
-                  re.match(r'^(Answer|उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*', line, re.IGNORECASE)):
-                answer_capture = re.search(r'Answer\s*[:=]\s*(.+)', line, re.IGNORECASE)
-                if not answer_capture:
-                    answer_capture = re.search(r'(?:उत्तर|సమాధానం|ଉତ୍ତର|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', line, re.IGNORECASE)
-                normalized_answer = None
-                if answer_capture:
-                    answer_fragment = answer_capture.group(1).strip()
-                    answer_fragment = re.sub(r'^[\-\s]+', '', answer_fragment)
-                    normalized_answer = normalize_answer_value(answer_fragment)
-                if normalized_answer:
-                    current_q['answer'] = f"Answer: {normalized_answer}"
-                elif answer_capture:
-                    current_q['answer'] = f"Answer: {answer_capture.group(1).strip()}"
-                else:
-                    fallback_match = re.search(r'[:=]\s*([A-Z0-9]+)', line)
-                    if fallback_match:
-                        current_q['answer'] = f"Answer: {fallback_match.group(1)}"
-                    else:
-                        current_q['answer'] = "Answer: " + line
-                print(f"DEBUG: Found answer: '{current_q['answer']}'")
-                if current_q['parts']:
-                    current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
-                current_q['options'] = normalize_option_list(current_q.get('options'))
-                questions.append(current_q)
-                if current_q.get('options'):
-                    print(f"DEBUG: Question {current_q['number']} has {len(current_q['options'])} options:")
-                    for idx_opt, opt_val in enumerate(current_q['options'], start=1):
-                        print(f"  Option {idx_opt}: '{opt_val}'")
-                if current_q.get('answer'):
-                    print(f"  Answer: '{current_q['answer']}'")
-                current_q = None
-                continue
-            elif 'Answer' in line and len(line) < 50:
-                answer_match = re.search(r'Answer\s*[:=]\s*([A-D])', line, re.IGNORECASE)
-                if answer_match:
-                    answer_val = answer_match.group(1).upper()
-                    current_q['answer'] = f"Answer: {answer_val}"
-                    print(f"DEBUG: Found fallback answer: {current_q['answer']}")
-                    if current_q['parts']:
-                        current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
-                    current_q['options'] = normalize_option_list(current_q.get('options'))
-                    questions.append(current_q)
-                    if current_q.get('options'):
-                        print(f"DEBUG: Question {current_q['number']} has {len(current_q['options'])} options:")
-                        for idx_opt, opt_val in enumerate(current_q['options'], start=1):
-                            print(f"  Option {idx_opt}: '{opt_val}'")
-                    if current_q.get('answer'):
-                        print(f"  Answer: '{current_q['answer']}'")
-                    current_q = None
-                    continue
-            # Check if this is an English-labelled option first - PRIORITIZE THIS
-            elif re.match(r'^[A-D]\)\s+', line, re.IGNORECASE):
-                english_match = re.match(r'^([A-D])\)\s+(.*)', line, re.IGNORECASE)
-                if english_match:
-                    marker = english_match.group(1).upper()
-                    opt_text = english_match.group(2).strip()
-                    option_line = f"{marker}) {opt_text}"
-                    if not current_q.get('options'):
-                        current_q['options'] = []
-                    current_q['options'].append(option_line)
-                    print(f"DEBUG: Found CLEAN English option: '{option_line[:50]}'")
-                    continue
-            # Check if this is any other type of option marker
-            elif re.match(option_line_pattern, line, re.IGNORECASE):
-                option_match = re.match(r'^([A-E1-5][\)\.:])\s*(.*)', line, re.IGNORECASE)
-                if option_match:
-                    marker = option_match.group(1)
-                    opt_text = option_match.group(2)
-                    option_line = build_option_line(marker, opt_text)
-                    if option_line:
-                        if not current_q.get('options'):
-                            current_q['options'] = []
-                        current_q['options'].append(option_line)
-                        print(f"DEBUG: Found other option: '{option_line[:50]}'")
-                    continue
-            else:
-                potential_option = try_extract_option_line(line, len(current_q.get('options', [])))
-                if potential_option:
-                    if not current_q.get('options'):
-                        current_q['options'] = []
-                    current_q['options'].append(potential_option)
-                    print(f"DEBUG: Extracted fallback option: '{potential_option[:50]}'")
-                    continue
-                if line:
-                    current_q['parts'].append(line)
 
-    if current_q:
-        if not current_q.get('number'):
-            auto_counter += 1
-            current_q['number'] = str(auto_counter)
-        if current_q['parts']:
-            current_q['content'] += '<br>' + '<br>'.join(current_q['parts'])
-        # Try to extract options from content if not found separately
-        if not current_q.get('options') or len(current_q['options']) == 0:
-            content_text = current_q.get('content', '')
-            options_in_content = re.findall(r'([A-D]\))\s*([^\n<]+)', content_text, re.IGNORECASE)
-            if options_in_content and len(options_in_content) >= 2:
-                formatted_options = []
-                for marker, text_segment in options_in_content[:4]:
-                    option_line = build_option_line(marker, text_segment)
-                    if option_line:
-                        formatted_options.append(option_line)
-                if formatted_options:
-                    current_q['options'] = formatted_options
-            else:
-                plain_text = re.sub(r'<br\s*/?>', '\n', content_text, flags=re.IGNORECASE)
-                plain_text = re.sub(r'<[^>]+>', ' ', plain_text)
-                lines_inner = plain_text.split('\n')
-                just_paren_options = []
-                for line_inner in lines_inner:
-                    line_inner = line_inner.strip()
-                    if re.match(r'\)\s*[^\s)]', line_inner):
-                        opt_text = re.sub(r'^\)\s*', '', line_inner).strip()
-                        if opt_text and len(opt_text) > 0:
-                            just_paren_options.append(opt_text)
-                            if len(just_paren_options) >= 4:
-                                break
-                if just_paren_options and len(just_paren_options) >= 2:
-                    option_letters = ['A', 'B', 'C', 'D']
-                    current_q['options'] = [f"{option_letters[i]}) {text.strip()}"
-                                          for i, text in enumerate(just_paren_options[:4])]
-                    print(f"DEBUG: Extracted {len(current_q['options'])} options from content fallback: {current_q['options']}")
-        # Try to extract answer from content if not found separately
-        if not current_q.get('answer'):
-            content_text = current_q.get('content', '')
-            answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉత్తర|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', content_text, re.IGNORECASE)
-            if answer_in_content:
-                ans_val = answer_in_content.group(1)
-                mapped = normalize_answer_value(ans_val)
-                current_q['answer'] = f"Answer: {mapped or ans_val}"
-        current_q['options'] = normalize_option_list(current_q.get('options'))
+    def finalize_current():
+        nonlocal current_q
+        if not current_q:
+            return
+        extras = current_q.pop('_extra', [])
+        if extras:
+            current_q['content'] = (current_q.get('content') or '') + '<br>' + '<br>'.join(extras)
+        if current_q.get('options'):
+            current_q['options'] = normalize_option_list(current_q['options'])
+        answer_val = current_q.get('answer')
+        if answer_val and not answer_val.startswith('Answer:'):
+            normalized = normalize_answer_value(answer_val)
+            current_q['answer'] = f"Answer: {normalized}" if normalized else f"Answer: {answer_val}"
         questions.append(current_q)
         if current_q.get('options'):
-            print(f"DEBUG: Question {current_q['number']} has {len(current_q['options'])} options:")
-            for idx_opt, opt_val in enumerate(current_q['options'], start=1):
-                print(f"  Option {idx_opt}: '{opt_val}'")
+            print(f"DEBUG: Question {current_q['number']} has {len(current_q['options'])} options: {current_q['options']}")
         if current_q.get('answer'):
-            print(f"  Answer: '{current_q['answer']}'")
+            print(f"DEBUG: Question {current_q['number']} answer: {current_q['answer']}")
+        current_q = None
 
-    # Debug: print what was parsed
+    local_marker_map = {
+        '१': 'A', '२': 'B', '३': 'C', '४': 'D',
+        'अ': 'A', 'आ': 'B', 'इ': 'C', 'ई': 'D',
+        'क': 'A', 'ख': 'B', 'ग': 'C', 'घ': 'D',
+        'ଅ': 'A', 'ଆ': 'B', 'ଇ': 'C', 'ଈ': 'D',
+        '୧': 'A', '୨': 'B', '୩': 'C', '୪': 'D'
+    }
+
+    for line in lines:
+        print(f"DEBUG: Processing line: '{line[:60]}'")
+
+        if current_q:
+            # Detect answers in multiple languages
+            answer_prefix_match = re.match(r'^(Answer|उत्तर|ଉତ୍ତର|ସମାଧାନ|समाधान)\s*[:=]\s*(.+)$', line, re.IGNORECASE)
+            if answer_prefix_match:
+                answer_fragment = answer_prefix_match.group(2).strip()
+                normalized = normalize_answer_value(answer_fragment)
+                current_q['answer'] = f"Answer: {normalized}" if normalized else f"Answer: {answer_fragment}"
+                print(f"DEBUG: Found answer: {current_q['answer']}")
+                finalize_current()
+                continue
+
+            if 'Answer' in line and len(line) < 50:
+                fallback_match = re.search(r'Answer\s*[:=]\s*([A-D])', line, re.IGNORECASE)
+                if fallback_match:
+                    answer_letter = fallback_match.group(1).upper()
+                    current_q['answer'] = f"Answer: {answer_letter}"
+                    print(f"DEBUG: Found fallback answer: {current_q['answer']}")
+                    finalize_current()
+                    continue
+
+            # English-labelled options
+            english_option = re.match(r'^([A-D])\)\s+(.+)$', line, re.IGNORECASE)
+            if english_option:
+                marker = english_option.group(1).upper()
+                option_text = english_option.group(2).strip()
+                current_q.setdefault('options', []).append(f"{marker}) {option_text}")
+                print(f"DEBUG: Added option {marker}) {option_text[:40]}")
+                continue
+
+            # Numeric options (1) -> A) etc.
+            digit_option = re.match(r'^([1-4])\)\s+(.+)$', line)
+            if digit_option:
+                digit_marker = digit_option.group(1)
+                option_text = digit_option.group(2).strip()
+                mapped = DIGIT_TO_LETTER.get(digit_marker, 'A')
+                current_q.setdefault('options', []).append(f"{mapped}) {option_text}")
+                print(f"DEBUG: Converted digit option {digit_marker}) to {mapped})")
+                continue
+
+            # Hindi/Odia markers that need conversion
+            local_option = re.match(r'^([\u0966-\u096f\u0b66-\u0b6fअआइईକଖଗଘଅଆଇଈ])\s*[\)\.:]\s*(.+)$', line)
+            if local_option:
+                local_marker = local_option.group(1)
+                option_text = local_option.group(2).strip()
+                normalized_marker = local_marker_map.get(local_marker)
+                if not normalized_marker:
+                    normalized_marker = DIGIT_TO_LETTER.get(normalize_unicode_digits(local_marker), 'A')
+                current_q.setdefault('options', []).append(f"{normalized_marker}) {option_text}")
+                print(f"DEBUG: Converted local option {local_marker} to {normalized_marker})")
+                continue
+
+            # Fallback bullet/paragraph options
+            fallback_option = try_extract_option_line(line, len(current_q.get('options', [])))
+            if fallback_option:
+                current_q.setdefault('options', []).append(fallback_option)
+                print(f"DEBUG: Extracted fallback option: {fallback_option[:40]}")
+                continue
+
+            current_q.setdefault('_extra', []).append(line)
+            continue
+
+        # No active question - attempt to detect new question lines
+        question_match = re.match(r'^(?:प्रश्न|Question)?\s*(\d+)[\.)]\s*(.+)$', line, re.IGNORECASE)
+        if question_match:
+            q_num = normalize_number_str(question_match.group(1)) or str(len(questions) + 1)
+            q_body = question_match.group(2).strip()
+            current_q = {
+                'number': q_num,
+                'content': q_body,
+                'options': [],
+                'answer': None,
+                '_extra': []
+            }
+            print(f"DEBUG: Found question {q_num}")
+            continue
+
+        # Handle question style with explicit word prefix first
+        question_word_match = re.match(r'^(?:प्रश्न|Question)\s*(\d+)\s*[:\-]\s*(.+)$', line, re.IGNORECASE)
+        if question_word_match:
+            q_num = normalize_number_str(question_word_match.group(1)) or str(len(questions) + 1)
+            q_body = question_word_match.group(2).strip()
+            current_q = {
+                'number': q_num,
+                'content': q_body,
+                'options': [],
+                'answer': None,
+                '_extra': []
+            }
+            print(f"DEBUG: Found question {q_num} via word prefix")
+            continue
+
+    finalize_current()
+
     if questions:
         print(f"\n=== DEBUG: Parsed {len(questions)} questions ===")
-        for i, q in enumerate(questions[:2], 1):  # Print first 2 questions for debugging
-            print(f"Q{q['number']}: Content length={len(q.get('content', ''))}, Options={len(q.get('options', []))}, Answer={q.get('answer', 'None')}")
-            if q.get('options'):
-                print(f"  Options: {q['options']}")
-            if q.get('answer'):
-                print(f"  Answer: {q['answer']}")
+        for q in questions[:3]:
+            print(f"Q{q['number']}: options={len(q.get('options', []))}, answer={q.get('answer')}")
         print("=== END DEBUG ===\n")
-    
+
     return questions if questions else None
 
 option_marker_pattern = r'(([A-D]|[1-4])\))'
