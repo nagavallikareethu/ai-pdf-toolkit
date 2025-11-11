@@ -191,83 +191,27 @@ Return only 2-line explanation text.
             continue
 
         # 2) Fallback to LLM for MCQs / textual questions
-        # First, try to split text by question numbers BEFORE sending to Gemini
-        # This helps ensure we extract questions individually
-        # Match question numbers (typically 31-65, 2 digits, or single/double digit in some contexts)
-        # Look for patterns like "31.", "32.", etc. followed by text (not another number)
-        question_matches = list(re.finditer(r'\b(\d{1,2})\.\s+(?!\d+\.\s+[A-Z]|Total|The|No\.|Class|Ratio|Years|Students|Number)', text))
-        
-        # Filter out invalid question numbers and detect actual question range
+        # Extract ALL numbered questions without filtering by range
+        question_matches = list(re.finditer(r'\b(\d{1,3})\.\s+', text))
+
         valid_questions = []
         for match in question_matches:
             q_num_str = match.group(1)
             try:
                 q_num_int = int(q_num_str)
-                # Question numbers should typically be 1-100 range for exam questions
-                if 1 <= q_num_int <= 100:
+                if 1 <= q_num_int <= 999:
                     valid_questions.append(match)
             except ValueError:
                 continue
-        
-        # If we have questions, detect the actual question range
-        # If we have questions in the 31-100 range, filter out Q1-Q30 (likely headers/metadata)
-        if len(valid_questions) > 3:
-            q_nums = [int(m.group(1)) for m in valid_questions]
-            min_q = min(q_nums)
-            max_q = max(q_nums)
-            questions_31_plus = [q for q in q_nums if 31 <= q <= 100]
-            questions_1_30 = [q for q in q_nums if 1 <= q <= 30]
-            if len(questions_31_plus) >= 5 and len(questions_1_30) > 0:
-                print(f"Detected question range 31-{max_q}. Filtering out Q1-Q30 (likely headers/metadata).")
-                valid_questions = [m for m in valid_questions if int(m.group(1)) >= 31]
-            elif min_q >= 31:
-                valid_questions = [m for m in valid_questions if int(m.group(1)) >= 31]
-            else:
-                print(f"Keeping all questions from {min_q} to {max_q}")
-        
-        if len(valid_questions) > 1:
-            # Found multiple valid questions - process each separately
+
+        print(f"Page {page['page']}: Found {len(valid_questions)} potential questions")
+
+        if len(valid_questions) > 0:
             page_questions = []
             for i, match in enumerate(valid_questions):
                 q_num = match.group(1)
                 match_start = match.start()
-                
-                # Look backwards to find where this question actually starts
-                # Look for previous question end (next question number or sentence end)
-                if i > 0:
-                    prev_match_end = valid_questions[i-1].start()
-                    # Look back from current question number to find the start
-                    # Usually starts after previous question's options or end marker
-                    # Search backwards for sentence end, option end, or previous question number
-                    lookback_start = max(0, prev_match_end - 500)  # Look back up to 500 chars
-                    context_before = text[lookback_start:match_start]
-                    
-                    # Find the actual start - look for patterns like:
-                    # 1. Previous question number followed by complete question
-                    # 2. Sentence ending before current question
-                    # 3. Options ending (1) 2) 3) 4) 5))
-                    prev_q_end = None
-                    # Try to find end of previous question
-                    if i > 0:
-                        prev_q_num = valid_questions[i-1].group(1)
-                        # Look for previous question's options or question mark
-                        prev_end_match = re.search(rf'{prev_q_num}\.\s+[^?]*\?[^?]*?[1-5]\)\s+[^0-9]+', context_before, re.DOTALL)
-                        if prev_end_match:
-                            prev_q_end = lookback_start + prev_end_match.end()
-                        else:
-                            # Look for previous question mark
-                            prev_qm = context_before.rfind('?')
-                            if prev_qm > len(context_before) - 200:  # If close to current question
-                                prev_q_end = lookback_start + prev_qm + 1
-                            else:
-                                prev_q_end = prev_match_end
-                    else:
-                        prev_q_end = 0
-                    
-                    start_pos = max(prev_q_end, match_start - 200)  # Start at most 200 chars before question number
-                else:
-                    start_pos = max(0, match_start - 200)  # For first question, look back up to 200 chars
-                
+
                 if i + 1 < len(valid_questions):
                     next_match_start = valid_questions[i + 1].start()
                     end_pos = min(next_match_start, len(text))
@@ -277,126 +221,65 @@ Return only 2-line explanation text.
                 q_text = text[match_start:end_pos].strip()
 
                 cleaning_patterns = [
-                    r"Sreedhar's\s+CCE[^?]*?",
-                    r'SBI\s+CLERK[^?]*?',
-                    r'LIC\s+Asst\.[^?]*?',
-                    r'PRELIMS\s+MT[^?]*?',
-                    r'NIACL\s+Asst\.[^?]*?',
-                    r'TIER-I[^?]*?',
-                    r'NUMERICAL\s+ABILITY[^?]*?',
-                    r'Directions\s*\([^)]+\)[^?]*?',
-                    r'Study\s+the\s+data\s+carefully[^?]*?',
-                    r'answer\s+the\s+following\s+questions[^?]*?',
-                    r'The\s+Bar-chart\s+shows[^?]*?',
-                    r'\d+\s+\d{4}\s+\d{4}[^?]*?',
-                    r'Years\s+in\s+Lakhs[^?]*?',
-                    r'MTS\s+CGL\s+CHSL[^?]*?',
-                    r'MODEL\s+TEST[^?]*?',
+                    r"Sreedhar's\s+CCE",
+                    r'SBI\s+CLERK',
+                    r'LIC\s+Asst\.',
+                    r'PRELIMS\s+MT',
+                    r'NIACL\s+Asst\.',
+                    r'TIER-I',
+                    r'NUMERICAL\s+ABILITY',
+                    r'Directions\s*\([^)]+\)',
+                    r'Study\s+the\s+data\s+carefully',
+                    r'answer\s+the\s+following\s+questions',
+                    r'The\s+Bar-chart\s+shows',
+                    r'Years\s+in\s+Lakhs',
+                    r'MODEL\s+TEST',
                 ]
 
                 for pattern in cleaning_patterns:
-                    q_text = re.sub(pattern, '', q_text, flags=re.IGNORECASE | re.DOTALL)
+                    q_text = re.sub(pattern, '', q_text, flags=re.IGNORECASE)
 
                 q_text = re.sub(r'\s+', ' ', q_text).strip()
-                
-                # Find the actual question - look for question text that might start before the number
-                # First, try to find the question number and extract from there
-                q_num_pattern = rf'\b{q_num}\.\s*'
-                q_num_match = re.search(q_num_pattern, q_text, re.IGNORECASE)
-                
-                if q_num_match:
-                    # Found question number, extract text starting from it
-                    q_text_after_num = q_text[q_num_match.end():].strip()
-                    
-                    # Look for question text - try to find the actual start
-                    # First, look for complete question patterns
-                    question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|A\s+sum|A\s+tap|A\s+boat|A\s+shopkeeper|Sirisha|The\s+population|Area\s+of|The\s+ratio|how\s+much|find\s+the|what\s+was|what\s+is|what\s+should)', q_text_after_num, re.IGNORECASE)
-                    if question_start:
-                        # Question starts here, include the number too
-                        q_text = f"{q_num}. {q_text_after_num[question_start.start():]}"
-                    else:
-                        # No clear start found - might be pattern question or already complete
-                        # Use text after number as-is if it's substantial
-                        if len(q_text_after_num) > 20:
-                            q_text = f"{q_num}. {q_text_after_num}"
-                        else:
-                            # Too short - might be incomplete, try to find more context before
-                            # Look back in original text before this question number
-                            if i > 0 and match_start > 0:
-                                # Try to get more context from before
-                                context_start = max(0, match_start - 300)
-                                context_text = text[context_start:match_start]
-                                # Find question text in context
-                                context_q_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4}|ratio|percent|number|students|amount|value|time|days|speed|probability|gain|loss|Area|A\s+sum|A\s+tap|A\s+boat|A\s+shopkeeper|Sirisha|population|tank|tap|empty|fill)', context_text, re.IGNORECASE)
-                                if context_q_start:
-                                    # Found question start in context, include it
-                                    full_q = context_text[context_q_start.start():] + text[match_start:end_pos]
-                                    q_text = full_q.strip()
-                                else:
-                                    # Still can't find start, use what we have
-                                    q_text = f"{q_num}. {q_text_after_num}"
-                            else:
-                                q_text = f"{q_num}. {q_text_after_num}"
+
+                if not q_text or re.match(r'^\d+\.?\s*$', q_text):
+                    continue
+
+                options_text = ""
+                full_text_segment = text[match_start:end_pos]
+
+                option_match = re.search(r'1\)\s+([^0-9]+?)\s+2\)\s+([^0-9]+?)(?:\s+3\)\s+([^0-9]+?))?(?:\s+4\)\s+([^0-9]+?))?(?:\s+5\)\s+([^0-9]+?))?', full_text_segment, re.IGNORECASE)
+
+                if option_match:
+                    options_parts = []
+                    for idx in range(1, (option_match.lastindex or 0) + 1):
+                        if option_match.group(idx):
+                            opt_text = option_match.group(idx).strip()
+                            opt_text = re.sub(r'^\d+\)\s*', '', opt_text)
+                            options_parts.append(f"{idx}) {opt_text}")
+                    if options_parts:
+                        options_text = " ".join(options_parts)
                 else:
-                    # Question number not found in text, try to find where question starts
-                    question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4})', q_text, re.IGNORECASE)
-                    if question_start:
-                        q_text = q_text[question_start.start():]
-                
-                # Extract complete question - preserve full question text
-                # First, check if question has a question mark
-                if '?' not in q_text:
-                    # No question mark - might be incomplete or pattern question
-                    # Look for option markers (1), 2), 3), 4), 5)) to find end
-                    option_match = re.search(r'1\)\s+|2\)\s+|3\)\s+|4\)\s+|5\)\s+', q_text)
-                    if option_match:
-                        # Question continues to options, extract everything up to options
-                        q_text = q_text[:option_match.start()].strip()
-                    # If it's a number series or pattern question, keep it as-is
-                    elif re.search(r'^\d+\.\s*\d+\s+\d+', q_text) or re.search(r'What\s+should\s+come|what\s+will\s+come', q_text, re.IGNORECASE):
-                        # Pattern question, keep as-is
-                        pass
+                    option_lines = re.findall(r'\)\s*([^\n\d\)]+)', full_text_segment, re.IGNORECASE)
+                    if len(option_lines) >= 2:
+                        options_parts = []
+                        for idx, opt_line in enumerate(option_lines[:5], start=1):
+                            opt_clean = opt_line.strip()
+                            if opt_clean:
+                                options_parts.append(f"{idx}) {opt_clean}")
+                        if options_parts:
+                            options_text = " ".join(options_parts)
                     else:
-                        # Likely incomplete - skip if too short
-                        if len(q_text) < 8:
-                            continue
-                else:
-                    # Has question mark - extract up to the question mark (including all context)
-                    # Find the last question mark (there might be multiple)
-                    q_marks = [m.end() for m in re.finditer(r'\?', q_text)]
-                    if q_marks:
-                        # Use the last question mark as the end, but include some context after if needed
-                        last_q_pos = q_marks[-1]
-                        # Check if there are options after the question mark
-                        text_after_q = q_text[last_q_pos:].strip()
-                        if re.search(r'1\)\s+|2\)\s+|3\)\s+|4\)\s+|5\)\s+', text_after_q):
-                            # Options found after question mark, extract up to question mark only
-                            q_text = q_text[:last_q_pos].strip()
-                        else:
-                            # No options after, might be complete question ending with ?
-                            # Check if there's more content that should be included
-                            # Look for "in Lakhs", "(Approximately)", etc. that might be part of question
-                            if re.search(r'\(in\s+Lakhs\)|\(Approximately\)|\(in\s+[A-Z]+\)', text_after_q, re.IGNORECASE):
-                                # Include this context too
-                                context_end = re.search(r'\(in\s+Lakhs\)|\(Approximately\)|\(in\s+[A-Z]+\)', text_after_q, re.IGNORECASE)
-                                if context_end:
-                                    q_text = q_text[:last_q_pos + context_end.end()].strip()
-                            else:
-                                # Just extract up to question mark
-                                q_text = q_text[:last_q_pos].strip()
-                
-                # Clean up: remove leading question number and any whitespace
-                q_text = re.sub(rf'^{q_num}\.\s*', '', q_text).strip()
-                
-                # Remove directions and instructions
-                q_text = re.sub(r'Direction\s*\([^)]+\):.*?(?=\d+\.|$)', '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                q_text = re.sub(r'What\s+will\s+come\s+in\s+the\s+place\s+of\s+question\s+mark', '', q_text, flags=re.IGNORECASE)
-                q_text = re.sub(r'in\s+the\s+following\s+series\?', '', q_text, flags=re.IGNORECASE)
-                q_text = re.sub(r'in\s+the\s+following\s+questions\?', '', q_text, flags=re.IGNORECASE)
-                q_text = q_text.strip()
-                
-                # Validate question completeness - look for actual question content
-                # Skip if it's clearly a data description or class description (not a question)
+                        option_pattern = re.findall(r'([1-5]\)\s*[^\n]+)', full_text_segment, re.IGNORECASE)
+                        if len(option_pattern) >= 2:
+                            options_text = " ".join([opt.strip() for opt in option_pattern[:5]])
+
+                if options_text:
+                    options_text = re.sub(r"Sreedhar's\s+CCE[^1-5]*", '', options_text, flags=re.IGNORECASE)
+                    options_text = re.sub(r'SBI\s+CLERK[^1-5]*', '', options_text, flags=re.IGNORECASE)
+                    options_text = re.sub(r'MODEL\s+TEST[^1-5]*', '', options_text, flags=re.IGNORECASE)
+                    options_text = re.sub(r'^\d+\.\s*', '', options_text)
+                    options_text = options_text.strip()
+
                 is_data_description = (
                     re.search(r'^(Class\s+[ABC]:|Total\s+no\.\s+of\s+students\s+are)', q_text, re.IGNORECASE) or
                     re.search(r'students\s+are\s+in\s+group\s+[XYZ]', q_text, re.IGNORECASE) or
@@ -407,123 +290,31 @@ Return only 2-line explanation text.
                 if is_data_description and '?' not in q_text:
                     continue
 
-                is_valid = len(q_text) >= 15 and not q_text.startswith(('0 ', '10 ', '20 ', '30 ', '40 ', '50 '))
-
-                if not is_valid:
+                if len(q_text) < 15 and '?' not in q_text:
                     continue
-                
-                # Additional filtering: skip if looks like incomplete fragment
-                # Questions should start with capital letter or question word
-                starts_properly = (
-                    q_text[0].isupper() or
-                    q_text.startswith(('Find', 'Calculate', 'What', 'How', 'Which', 'Total', 'Average', 'Out of', 'In 201', 'A ', 'The ', 'Area', 'Sirisha')) or
-                    is_pattern_question
-                )
-                
-                if not starts_properly and len(q_text) < 50:
-                    continue  # Skip fragments that don't start properly
-                
-                # Extract options from original text after question
-                # Handle multiple formats:
-                # 1. "1) option1 2) option2 3) option3 4) option4 5) option5" (all on one line)
-                # 2. ")20%", ") 25%", ") 15%", ") 18%" (just closing parens, separate lines)
-                # 3. "1)", "2)", "3)", "4)", "5)" on separate lines
-                options_text = ""
-                # First, try to find options in the original text segment
-                full_text_segment = text[start_pos:end_pos]
-                
-                # Try format 1: "1) option1 2) option2..." (all on one line)
-                option_match = re.search(r'1\)\s+([^0-9]+?)\s+2\)\s+([^0-9]+?)(?:\s+3\)\s+([^0-9]+?))?(?:\s+4\)\s+([^0-9]+?))?(?:\s+5\)\s+([^0-9]+?))?', full_text_segment, re.IGNORECASE)
-                
-                if option_match:
-                    # Build options string from matches
-                    options_parts = []
-                    for i in range(1, option_match.lastindex + 1):
-                        if option_match.group(i):
-                            opt_text = option_match.group(i).strip()
-                            # Add option number if not present
-                            if not re.match(r'^\d+\)', opt_text):
-                                opt_text = f"{i}) {opt_text}"
-                            else:
-                                opt_text = f"{i}) {re.sub(r'^\d+\)\s*', '', opt_text)}"
-                            options_parts.append(opt_text)
-                    if options_parts:
-                        options_text = " ".join(options_parts)
-                else:
-                    # Try format 2: ")option" (just closing parens, separate lines)
-                    # Look for lines with pattern: ")text" or ") text"
-                    option_lines = re.findall(r'\)\s*([^\n\d\)]+)', full_text_segment, re.IGNORECASE)
-                    if len(option_lines) >= 2:
-                        # Found multiple option-like lines
-                        options_parts = []
-                        for idx, opt_line in enumerate(option_lines[:5], start=1):  # Limit to 5 options
-                            opt_clean = opt_line.strip()
-                            if opt_clean and len(opt_clean) > 0:
-                                options_parts.append(f"{idx}) {opt_clean}")
-                        if options_parts:
-                            options_text = " ".join(options_parts)
-                    else:
-                        # Try format 3: Separate lines with "1)", "2)", etc.
-                        option_pattern = re.findall(r'([1-5]\)\s*[^\n]+)', full_text_segment, re.IGNORECASE)
-                        if len(option_pattern) >= 2:
-                            # Found numbered options on separate lines
-                            options_text = " ".join([opt.strip() for opt in option_pattern[:5]])
-                
-                # Also try to find options in the next 500 chars after end_pos
-                if not options_text and end_pos < len(text):
-                    next_text = text[end_pos:end_pos + 500]
-                    # Try format 1 again
-                    option_line = re.search(r'1\)\s+[^?]+?(?:2\)|3\)|4\)|5\))', next_text, re.DOTALL)
-                    if option_line:
-                        options_text = option_line.group(0).strip()
-                    else:
-                        # Try format 2 in next text
-                        option_lines = re.findall(r'\)\s*([^\n\d\)]+)', next_text, re.IGNORECASE)
-                        if len(option_lines) >= 2:
-                            options_parts = []
-                            for idx, opt_line in enumerate(option_lines[:5], start=1):
-                                opt_clean = opt_line.strip()
-                                if opt_clean:
-                                    options_parts.append(f"{idx}) {opt_clean}")
-                            if options_parts:
-                                options_text = " ".join(options_parts)
-                
-                # Clean options text
-                if options_text:
-                    # Remove headers/metadata
-                    options_text = re.sub(r'Sreedhar\'s\s+CCE[^1-5]*', '', options_text, flags=re.IGNORECASE)
-                    options_text = re.sub(r'SBI\s+CLERK[^1-5]*', '', options_text, flags=re.IGNORECASE)
-                    options_text = re.sub(r'MODEL\s+TEST[^1-5]*', '', options_text, flags=re.IGNORECASE)
-                    options_text = re.sub(r'^\d+\.\s*', '', options_text)  # Remove leading question number
-                    options_text = options_text.strip()
-                
+
                 page_questions.append({"num": q_num, "text": q_text, "options": options_text})
-            
-            print(f"Page {page['page']}: Extracted {len(page_questions)} questions")
-            for pq in page_questions:
-                print(f"  Q{pq['num']}: {pq['text'][:50]}...")
-            # Process questions in batches for better performance
-            # Include page context for questions that might need chart/table data
-            page_context = text[:2000]  # First 2000 chars usually contain chart/table descriptions
-            
-            # Batch questions: Process 5 questions per API call instead of 1
-            batch_size = 5
-            for batch_start in range(0, len(page_questions), batch_size):
-                batch = page_questions[batch_start:batch_start + batch_size]
-                
-                # Add delay between batches to avoid rate limits
-                if batch_start > 0:
-                    time.sleep(0.5)  # Reduced delay to 0.5 seconds between batches
-                
-                # Build batch prompt with all questions in the batch
-                questions_text = ""
-                for pq in batch:
-                    options_section = ""
-                    if pq.get('options'):
-                        options_section = f"\nOPTIONS: {pq['options']}"
-                    questions_text += f"\n\nQUESTION {pq['num']}:\n{pq['text']}{options_section}\n"
-                
-                prompt = f"""You are an expert exam solver. Solve these {len(batch)} questions completely.
+
+            print(f"Page {page['page']}: Processing {len(page_questions)} questions")
+
+            if page_questions:
+                page_context = text[:2000]
+                batch_size = 5
+
+                for batch_start in range(0, len(page_questions), batch_size):
+                    batch = page_questions[batch_start:batch_start + batch_size]
+
+                    if batch_start > 0:
+                        time.sleep(0.5)
+
+                    questions_text = ""
+                    for pq in batch:
+                        options_section = ""
+                        if pq.get('options'):
+                            options_section = f"\nOPTIONS: {pq['options']}"
+                        questions_text += f"\n\nQUESTION {pq['num']}:\n{pq['text']}{options_section}\n"
+
+                    prompt = f"""You are an expert exam solver. Solve these {len(batch)} questions completely.
 
 PAGE CONTEXT (may contain chart/table data):
 {page_context}
@@ -542,258 +333,23 @@ Return ONLY a JSON array (no markdown, no code blocks). Start with [ and end wit
 ]
 
 Return ONLY the JSON array:"""
-                try:
-                    response = model.generate_content(prompt)
-                    raw_output = extract_json_block(response.text)
-                    
-                    # Try to parse JSON
-                    parsed = None
                     try:
-                        parsed = json.loads(raw_output)
-                        # If it's a single object, convert to array
-                        if isinstance(parsed, dict):
-                            parsed = [parsed]
-                    except json.JSONDecodeError:
-                        # Try to extract JSON from raw response using extract_inner_json
-                        parsed = extract_inner_json(response.text)
-                        if parsed and isinstance(parsed, dict):
-                            parsed = [parsed]
-                    
-                    if parsed and isinstance(parsed, list):
-                        # Process each question in the batch response
-                        for i, pq in enumerate(batch):
-                            if i < len(parsed):
-                                pq_result = parsed[i]
-                                result = {
-                                    "question_number": pq_result.get("question_number", pq['num']),
-                                    "question_text": pq_result.get("question_text", pq['text']),
-                                    "options": pq_result.get("options", pq.get('options', '')),
-                                    "answer": pq_result.get("answer", ""),
-                                    "explanation": pq_result.get("explanation", "")
-                                }
-                                results.append(result)
-                            else:
-                                # If batch response doesn't have enough items, process individually
-                                # Fallback: try to extract from response text
-                                results.append({
-                                    "question_number": pq['num'],
-                                    "question_text": pq['text'],
-                                    "options": pq.get('options', ''),
-                                    "answer": "",
-                                    "explanation": "Solution could not be extracted from batch response."
-                                })
-                    else:
-                        # If batch parsing fails, process each question individually as fallback
-                        for pq in batch:
-                            results.append({
-                                "question_number": pq['num'],
-                                "question_text": pq['text'],
-                                "options": pq.get('options', ''),
-                                "answer": "",
-                                "explanation": "Solution could not be calculated from batch."
-                            })
-                except Exception as e:
-                    error_str = str(e)
-                    # Check if it's a quota/rate limit error
-                    if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
-                        print(f"Quota/Rate limit hit for batch starting at question {batch[0]['num']}. Waiting 30 seconds before retry...")
-                        time.sleep(30)  # Wait 30 seconds for quota to reset
+                        response = model.generate_content(prompt)
+                        raw_output = extract_json_block(response.text)
+                        parsed = None
                         try:
-                            # Retry once after waiting
-                            response = model.generate_content(prompt)
-                            raw_output = extract_json_block(response.text)
-                            parsed = extract_inner_json(response.text)
-                            if parsed:
-                                if isinstance(parsed, dict):
-                                    parsed = [parsed]
-                                for i, pq in enumerate(batch):
-                                    if i < len(parsed):
-                                        pq_result = parsed[i]
-                                        result = {
-                                            "question_number": pq_result.get("question_number", pq['num']),
-                                            "question_text": pq_result.get("question_text", pq['text']),
-                                            "options": pq_result.get("options", pq.get('options', '')),
-                                            "answer": pq_result.get("answer", ""),
-                                            "explanation": pq_result.get("explanation", "")
-                                        }
-                                        results.append(result)
-                                    else:
-                                        results.append({
-                                            "question_number": pq['num'],
-                                            "question_text": pq['text'],
-                                            "options": pq.get('options', ''),
-                                            "answer": "",
-                                            "explanation": "Solution could not be calculated due to API quota limit."
-                                        })
-                            else:
-                                # If retry still fails, save questions without solution
-                                for pq in batch:
-                                    results.append({
-                                        "question_number": pq['num'],
-                                        "question_text": pq['text'],
-                                        "options": pq.get('options', ''),
-                                        "answer": "",
-                                        "explanation": "Solution could not be calculated due to API quota limit."
-                                    })
-                        except:
-                            # If retry fails, save questions without solution
-                            for pq in batch:
-                                results.append({
-                                    "question_number": pq['num'],
-                                    "question_text": pq['text'],
-                                    "options": pq.get('options', ''),
-                                    "answer": "",
-                                    "explanation": "Solution could not be calculated due to API quota limit."
-                                })
-                    else:
-                        # Other errors - save with clean error message
-                        print(f"Error solving batch starting at question {batch[0]['num']}: {error_str[:100]}")
-                        for pq in batch:
-                            results.append({
-                                "question_number": pq['num'],
-                                "question_text": pq['text'],
-                                "options": pq.get('options', ''),
-                                "answer": "",
-                                "explanation": "Solution could not be calculated. Please try again later."
-                            })
-            continue  # Skip the main prompt processing below
-        
-        # If no question splits found, use the original approach but with enhanced cleaning
-        prompt = f"""You are an expert exam solver. Extract and solve ONLY the actual questions from the text below.
-
-CRITICAL INSTRUCTIONS - READ CAREFULLY:
-1. IGNORE COMPLETELY and DO NOT include in question_text ANY of the following:
-   - Headers: "Sreedhar's CCE", "SBI CLERK", "LIC Asst.", "PRELIMS MT", "NIACL Asst.", "TIER-I", "MT - 15", "MT - 117"
-   - Section titles: "NUMERICAL ABILITY"
-   - Directions: "Directions (31-35):", "Study the data carefully", "answer the following questions"
-   - Chart descriptions: "The Bar-chart shows students registered for three different exams..."
-   - Chart data: "0 10 20 30 40 50 60", "2012 2013 2014 2015 2016", "Years in Lakhs", "MTS CGL CHSL"
-   - Footer text: "SBI CLERK / LIC Asst. PRELIMS MODEL TEST - 117", "NIACL Asst. TIER-I MODEL TEST - 15"
-   - Page numbers, option numbers that appear before questions
-   
-2. Extract ONLY the numbered questions (e.g., questions starting with "31.", "32.", "33.")
-
-3. For EACH question found:
-   - question_number: Extract the question number (e.g., "31", "32", "33")
-   - question_text: Extract ONLY the actual question sentence/paragraph that ends with "?"
-     * Start from the first word of the actual question (like "Find", "Calculate", "What", "How", "Which", "Total", "Average")
-     * End at the question mark "?"
-     * DO NOT include any headers, directions, or metadata before the question
-     * Example CORRECT: "Find the ratio of total students registered for all the three exams in 2012 and 2013 together to total students registered for all the three exams in 2014 and 2015 together?"
-     * Example WRONG: "31. 1 Sreedhar's CCE SBI CLERK... Find the ratio..." (DO NOT include "31. 1 Sreedhar's CCE...")
-   - answer: The correct option number (e.g., "1", "2", "3", "4", "5") based on the data
-   - explanation: A concise 2-line explanation of how to solve this question
-
-4. If you see multiple questions on a page, extract ALL of them separately.
-
-CRITICAL: Return ONLY a JSON array (no markdown, no code blocks, no other text). Start with [ and end with ].
-Example format:
-[
-  {{"question_number": "31", "question_text": "Find the ratio of total students registered for all the three exams in 2012 and 2013 together to total students registered for all the three exams in 2014 and 2015 together?", "answer": "3", "explanation": "Calculate totals for 2012+2013 and 2014+2015, then find ratio."}},
-  {{"question_number": "32", "question_text": "Average number of students registered for MTS exam in all the five years together is how much less/more than the average number of students registered for CHSL exam in all the five years together?", "answer": "2", "explanation": "Calculate average MTS and average CHSL from the data, then find difference."}}
-]
-
-Input text:
-{text}
-"""
-        try:
-            response = model.generate_content(prompt)
-            raw_output = extract_json_block(response.text)
-            parsed = None
-            try:
-                parsed = json.loads(raw_output)
-                if isinstance(parsed, dict):
-                    parsed = [parsed]
-                
-                # Clean extracted questions to remove headers/directions
-                if isinstance(parsed, list):
-                    for q in parsed:
-                        q_text = q.get("question_text", "")
-                        if q_text:
-                            # Step 1: Find the actual question number pattern (e.g., "31.", "32.")
-                            q_num = q.get("question_number", "")
-                            if q_num:
-                                # Try to find text starting from this question number
-                                pattern = rf'\b{q_num}\.\s*'
-                                match = re.search(pattern, q_text, re.IGNORECASE)
-                                if match:
-                                    # Extract text starting from the question number
-                                    q_text = q_text[match.start():]
-                                else:
-                                    # If pattern not found, look for any number followed by period
-                                    match = re.search(rf'^\d+\.\s*{q_num}\.\s*', q_text)
-                                    if match:
-                                        q_text = q_text[match.end():]
-                            
-                            # Step 2: Remove all unwanted headers/directions patterns
-                            # Remove patterns that appear at the start (even after question number)
-                            unwanted_patterns = [
-                                r'^\d+\.\s*\d+\s+[A-Z][^?]*?Sreedhar\'s\s+CCE[^?]*?',
-                                r'Sreedhar\'s\s+CCE[^?]*?',
-                                r'SBI\s+CLERK[^?]*?',
-                                r'LIC\s+Asst\.[^?]*?',
-                                r'PRELIMS\s+MT[^?]*?',
-                                r'NIACL\s+Asst\.[^?]*?',
-                                r'TIER-I\s+MT[^?]*?',
-                                r'NUMERICAL\s+ABILITY[^?]*?',
-                                r'Directions\s*\([^)]+\)[^?]*?',
-                                r'Study\s+the\s+data\s+carefully[^?]*?',
-                                r'answer\s+the\s+following\s+questions[^?]*?',
-                                r'The\s+Bar-chart\s+shows[^?]*?',
-                                r'MODEL\s+TEST[^?]*?',
-                                r'\d+\s+\d{4}\s+\d{4}[^?]*?',  # Remove chart axis labels like "0 10 20 30..."
-                                r'Years\s+in\s+Lakhs[^?]*?',
-                                r'MTS\s+CGL\s+CHSL[^?]*?(?=\d+\.)',  # Remove legend but keep if followed by question number
-                            ]
-                            
-                            for pattern in unwanted_patterns:
-                                q_text = re.sub(pattern, '', q_text, flags=re.IGNORECASE | re.DOTALL)
-                            
-                            # Step 3: Find the actual question (starts with a capital letter or number, ends with ?)
-                            # Try to extract from first meaningful sentence that ends with ?
-                            question_match = re.search(r'([A-Z][^?]*?\?)', q_text)
-                            if question_match:
-                                q_text = question_match.group(1)
-                            else:
-                                # Fallback: remove everything before the first meaningful question text
-                                # Look for patterns like "Find the", "Calculate", "What is", etc.
-                                question_start = re.search(r'(Find|Calculate|What|How|Which|Total|Average|Out\s+of|In\s+\d{4})', q_text, re.IGNORECASE)
-                                if question_start:
-                                    q_text = q_text[question_start.start():]
-                            
-                            # Step 4: Remove any remaining unwanted text before question
-                            # Remove any leading numbers or metadata patterns
-                            q_text = re.sub(r'^\d+\.\s*\d+\s+[A-Z\s/]+', '', q_text)  # Remove "31. 1 SBI CLERK / LIC"
-                            q_text = re.sub(r'^\d+\.\s*[A-Z][^A-Z]*?(?=[A-Z][a-z])', '', q_text)  # Remove leading metadata
-                            
-                            # Step 5: Clean up multiple spaces and normalize
-                            q_text = re.sub(r'\s+', ' ', q_text).strip()
-                            
-                            # Step 6: Ensure question ends with ? and contains actual question words
-                            if not q_text.endswith('?'):
-                                # Try to find the question mark in the text
-                                q_match = re.search(r'([^?]*\?)', q_text)
-                                if q_match:
-                                    q_text = q_match.group(1)
-                            
-                            q["question_text"] = q_text
-                        
-                        # Ensure question_number is present and clean
-                        if "question_number" not in q or not q["question_number"]:
-                            # Try to extract from question_text
-                            match = re.search(r'^(\d+)\.', q_text)
-                            if match:
-                                q["question_number"] = match.group(1)
-            except Exception:
-                # if JSON parsing fails, keep raw_output
-                parsed = [{"question_text": text, "raw_output": raw_output}]
-            results.extend(parsed)
-        except Exception as e:
-            results.append({
-                "question_text": text,
-                "error": str(e),
-                "method": "gemini_fallback"
-            })
+                            parsed = json.loads(raw_output)
+                        except Exception:
+                            parsed = extract_inner_json(raw_output)
+                        if parsed and isinstance(parsed, list):
+                            for item in parsed:
+                                item['question_number'] = str(item.get('question_number') or item.get('question_num') or '')
+                            results.extend(parsed)
+                        else:
+                            print(f"Failed to parse model output on page {page['page']}:")
+                            print(raw_output)
+                    except Exception as e:
+                        print(f"Error processing batch on page {page['page']}: {e}")
 
     # Sort results by question_number to maintain sequence
     def get_qnum(q):
