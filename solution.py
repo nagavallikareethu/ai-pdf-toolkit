@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # pipeline_no_ocr.py
 """
 Unified pipeline (NO OCR):
@@ -345,6 +345,12 @@ Return only 2-line explanation text.
 
                 q_text = re.sub(r'\s+', ' ', q_text).strip()
 
+                # Skip option blocks (e.g., "1) ... 2) ...") that can be misdetected as questions
+                option_marker_count = len(re.findall(r'(?:\b\d{1,2}\)|\b[A-E]\))', q_text))
+                if option_marker_count >= 2 and '?' not in q_text:
+                    print(f"DEBUG: Skipping option block mistaken as question {q_num}")
+                    continue
+
                 if not q_text or re.match(r'^\d+\.?\s*$', q_text):
                     continue
 
@@ -580,21 +586,14 @@ Return ONLY the JSON array:"""
 # Translation
 # -------------------------
 LANGUAGES = {
-    "1": "Telugu",
-    "2": "Hindi",
-    "3": "Odia",
-    "4": "Tamil",
-    "5": "Kannada",
-    "6": "Gujarati",
-    "7": "Marathi",
-    "8": "Bengali",
-    "9": "English"
+    "1": "Hindi",
+    "2": "Odia",
 }
 
 def translate_items(items, target_lang):
     lang_lower = target_lang.lower()
     translated = []
-    for idx, item in enumerate(tqdm(items, desc=f"Translating → {target_lang}")):
+    for idx, item in enumerate(tqdm(items, desc=f"Translating â†’ {target_lang}")):
         q = item.get("question_text", "")
         opts = item.get("options", "")
         a = item.get("answer", "")
@@ -773,11 +772,14 @@ SCRIPT_DIR = pathlib.Path(__file__).parent.resolve()
 FONTS_DIR = SCRIPT_DIR / "fonts"
 
 FONTS = {
-    "telugu": str(FONTS_DIR / "NotoSansTelugu-Regular.ttf"),
     "hindi":  str(FONTS_DIR / "TiroDevanagariHindi-Regular.ttf"),
     "odia":   str(FONTS_DIR / "AnekOdia-Regular.ttf"),
-    "tamil":  str(FONTS_DIR / "NotoSansTamil-Regular.ttf"),
-    "kannada": str(FONTS_DIR / "NotoSansKannada-Regular.ttf"),
+}
+
+LANG_LABELS = {
+    "hindi": ("उत्तर", "व्याख्या", "हिंदी में अनुवादित प्रश्नपत्र"),
+    "odia": ("ଉତ୍ତର", "ବ୍ୟାଖ୍ୟା", "ଓଡ଼ିଆରେ ଅନୁବାଦିତ ପ୍ରశ੍ନପତ୍ର"),
+    "english": ("Answer", "Explanation", "Translated Question Paper in English"),
 }
 
 # FONT REGISTRATION FUNCTION - ADDED
@@ -794,20 +796,14 @@ def register_reportlab_fonts():
 
 def detect_language_sample(data):
     if not data:
-        return "telugu"
+        return "hindi"
     sample = json.dumps(data[:5], ensure_ascii=False).lower()
-    if "telugu" in sample:
-        return "telugu"
-    elif "hindi" in sample:
+    if "hindi" in sample:
         return "hindi"
     elif "odia" in sample or "oriya" in sample:
         return "odia"
-    elif "tamil" in sample:
-        return "tamil"
-    elif "kannada" in sample:
-        return "kannada"
     else:
-        return "telugu"
+        return "hindi"
 
 def build_html(pages, lang):
     font_file = FONTS.get(lang, None)
@@ -826,15 +822,7 @@ def build_html(pages, lang):
         font_face = ""
         body_font = "sans-serif"
 
-    lang_labels = {
-        "telugu": ("సమాధానం", "వివరణ", "తెలుగులో అనువదించిన ప్రశ్నపత్రం"),
-        "hindi":  ("उत्तर", "व्याख्या", "हिंदी में अनुवादित प्रश्नपत्र"),
-        "odia":   ("ଉତ୍ତର", "ବ୍ୟାଖ୍ୟା", "ଓଡ଼ିଆରେ ଅନୁବାଦିତ ପ୍ରశ్ନପତ୍ର"),
-        "tamil":  ("பதில்", "விரிவுரை", "தமிழில் மொழிபெயர்த்த கேள்வித்தாள்"),
-        "kannada":("ಉತ್ತರ", "ವಿವರಣೆ", "ಕನ್ನಡದಲ್ಲಿ ಅನುವಾದಿತ ಪ್ರಶ್ನೆ ಪತ್ರಿಕೆ"),
-        "english": ("Answer", "Explanation", "Translated Question Paper in English")
-    }
-    ans_label, exp_label, title_label = lang_labels.get(lang, lang_labels["telugu"])
+    ans_label, exp_label, title_label = LANG_LABELS.get(lang, LANG_LABELS["hindi"])
 
     css = f"""
     {font_face}
@@ -948,16 +936,8 @@ def render_pdf_from_data_reportlab(data, lang, output_pdf):
         font_name = lang.capitalize()
     
     # Language labels
-    lang_labels = {
-        "telugu": ("సమాధానం", "వివరణ", "తెలుగులో అనువదించిన ప్రశ్నపత్రం"),
-        "hindi":  ("उत्तर", "व्याख्या", "हिंदी में अनुवादित प्रश्नपत्र"),
-        "odia":   ("ଉତ୍ତର", "ବ୍ୟାଖ୍ୟା", "ଓଡ଼ିଆରେ ଅନୁବାଦିତ ପ୍ରశ్ନପତ୍ର"),
-        "tamil":  ("பதில்", "விரிவுரை", "தமிழில் மொழிபெயர்த்த கேள்வித்தாள்"),
-        "kannada":("ಉತ್ತರ", "ವಿವರಣೆ", "ಕನ್ನಡದಲ್ಲಿ ಅನುವಾದಿತ ಪ್ರಶ್ನೆ ಪತ್ರಿಕೆ"),
-        "english": ("Answer", "Explanation", "Translated Question Paper in English")
-    }
-    ans_label, exp_label, title_label = lang_labels.get(lang, lang_labels["telugu"])
-    
+    ans_label, exp_label, title_label = LANG_LABELS.get(lang, LANG_LABELS["hindi"])
+
     # Create PDF
     c = canvas.Canvas(str(output_pdf), pagesize=A4)
     width, height = A4
@@ -1068,14 +1048,14 @@ async def render_pdf_from_data(data, lang, output_pdf):
     try:
         # Try Playwright first
         if await render_pdf_from_data_playwright(data, lang, output_pdf):
-            print(f"PDF rendered with Playwright → {output_pdf}")
+            print(f"PDF rendered with Playwright â†’ {output_pdf}")
             return
     except Exception as e:
         print(f"Playwright rendering failed: {e}. Trying ReportLab fallback...")
     
     # Fallback to ReportLab
     if render_pdf_from_data_reportlab(data, lang, output_pdf):
-        print(f"PDF rendered with ReportLab → {output_pdf}")
+        print(f"PDF rendered with ReportLab â†’ {output_pdf}")
     else:
         print(f"PDF rendering failed for {output_pdf}")
 
@@ -1092,8 +1072,8 @@ def main():
     print("\nChoose translation language:")
     for k, v in LANGUAGES.items():
         print(f"{k}. {v}")
-    choice = input("Enter language number (default 1 - Telugu): ").strip() or "1"
-    target_lang = LANGUAGES.get(choice, "Telugu")
+    choice = input("Enter language number (default 1 - Hindi): ").strip() or "1"
+    target_lang = LANGUAGES.get(choice, "Hindi")
     lang_lower = target_lang.lower()
 
     # 1) Extract
@@ -1105,7 +1085,7 @@ def main():
     solved = solve_pages(pages)
 
     # 3) Translate
-    print(f"\nTranslating solved content → {target_lang} ...")
+    print(f"\nTranslating solved content â†’ {target_lang} ...")
     translated = translate_items(solved, target_lang)
 
     # 4) Render PDF

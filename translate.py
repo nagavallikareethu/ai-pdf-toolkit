@@ -52,14 +52,7 @@ FONTS = {
 
 LANG_OPTIONS = {
     "1": ("hi", "Hindi"),
-    "2": ("te", "Telugu"), 
-    "3": ("or", "Odia"),
-    "4": ("ta", "Tamil"),
-    "5": ("ml", "Malayalam"),
-    "6": ("bn", "Bengali"),
-    "7": ("gu", "Gujarati"),
-    "8": ("pa", "Punjabi"),
-    "9": ("mr", "Marathi")
+    "2": ("or", "Odia"),
 }
 
 MAX_RETRIES = 3

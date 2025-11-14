@@ -25,6 +25,15 @@ if not api_key:
 
 genai.configure(api_key=api_key)
 
+SUPPORTED_LANGUAGES = {"hindi", "odia"}
+
+
+def ensure_supported_language(language: str):
+    lang_normalized = (language or "").strip().lower()
+    if lang_normalized not in SUPPORTED_LANGUAGES:
+        raise ValueError("Only Hindi and Odia are supported for MCQ generation.")
+    return lang_normalized
+
 # ======================================================
 # PDF TEXT EXTRACTION FUNCTION
 # ======================================================
@@ -39,6 +48,8 @@ def extract_text_from_pdf(pdf_path):
 # GEMINI CALL FUNCTION
 # ======================================================
 def generate_mcqs(pdf_path, n, language, topic=None):
+    lang_normalized = ensure_supported_language(language)
+    language_display = language or lang_normalized.title()
     pdf_text = extract_text_from_pdf(pdf_path)
 
     if not pdf_text:
@@ -53,7 +64,7 @@ ADDITIONAL TOPIC REQUIREMENT:
 - Prefer PDF content that relates to this topic. If the PDF has limited coverage, craft questions that are still consistent with the document's style while centering the topic."""
 
     hindi_analogy_example = ""
-    if language.lower() == "hindi":
+    if lang_normalized == "hindi":
         hindi_analogy_example = """
 
 SPECIFIC EXAMPLE FOR ANALOGY QUESTIONS IN HINDI:
@@ -73,8 +84,8 @@ Answer: A
 """
 
     special_formatting_block = ""
-    if language.lower() in ("hindi", "odia"):
-        if language.lower() == "hindi":
+    if lang_normalized in ("hindi", "odia"):
+        if lang_normalized == "hindi":
             example_block = """
 1. दो और दो का योग क्या है?
 A) 3
@@ -115,9 +126,9 @@ CRITICAL FOR {language.upper()} FORMATTING:
 - Follow this structure exactly:
 {example_block}"""
 
-    prompt = f"""IMPORTANT: You MUST follow EXACT formatting rules for {language} MCQs. FAILURE TO FOLLOW FORMAT WILL RESULT IN REJECTION.
+    prompt = f"""IMPORTANT: You MUST follow EXACT formatting rules for {language_display} MCQs. FAILURE TO FOLLOW FORMAT WILL RESULT IN REJECTION.
 
-TASK: Generate exactly {n} multiple-choice questions in {language} based on the document.
+TASK: Generate exactly {n} multiple-choice questions in {language_display} based on the document.
 
 NON-NEGOTIABLE FORMAT RULES:
 1. QUESTION FORMAT: "1. [Question text?]"
@@ -278,36 +289,39 @@ def generate_topic_mcqs(topic: str, n: int, language: str):
     if not topic:
         raise ValueError("Topic is required for topic-only MCQ generation.")
 
-    prompt = f"""You are an expert exam question generator. Create exactly {n} NEW multiple-choice questions focused strictly on the topic: \"{topic}\".
+    lang_normalized = ensure_supported_language(language)
+    language_display = language or lang_normalized.title()
+
+    prompt = f"""You are an expert exam question generator. Create exactly {n} NEW multiple-choice questions focused strictly on the topic: "{topic}".
 
 CRITICAL FORMATTING RULES - FOLLOW EXACTLY:
-1. Write questions and options completely in {language} language
+1. Write questions and options completely in {language_display} language
 2. Use ONLY English letters A), B), C), D) for option MARKERS
 3. Use ONLY "Answer: X" where X is A, B, C, or D - NEVER write answers in local language
 4. Keep all mathematical numbers (3, 4, 5, 6, etc.) as digits - DO NOT translate numbers to words
 5. Each question MUST follow this EXACT format:
 
-1. [Question text in {language}?]
-A) [Option A in {language} - keep numbers as digits]
-B) [Option B in {language} - keep numbers as digits]
-C) [Option C in {language} - keep numbers as digits]
-D) [Option D in {language} - keep numbers as digits]
+1. [Question text in {language_display}?]
+A) [Option A in {language_display} - keep numbers as digits]
+B) [Option B in {language_display} - keep numbers as digits]
+C) [Option C in {language_display} - keep numbers as digits]
+D) [Option D in {language_display} - keep numbers as digits]
 Answer: B
 
-2. [Next question text in {language}?]
-A) [Option A in {language} - keep numbers as digits]
-B) [Option B in {language} - keep numbers as digits]
-C) [Option C in {language} - keep numbers as digits]
-D) [Option D in {language} - keep numbers as digits]
+2. [Next question text in {language_display}?]
+A) [Option A in {language_display} - keep numbers as digits]
+B) [Option B in {language_display} - keep numbers as digits]
+C) [Option C in {language_display} - keep numbers as digits]
+D) [Option D in {language_display} - keep numbers as digits]
 Answer: C
 
 IMPORTANT:
 - Use ONLY English A), B), C), D) for option MARKERS
 - Keep numbers as digits (3, 4, 5, 6) - DO NOT translate numbers to words
-- DO NOT use १) २) ३) ४) or 1) 2) 3) 4) or अ) आ) इ) ई)
+- DO NOT use à¥§) à¥¨) à¥©) à¥ª) or 1) 2) 3) 4) or à¤…) à¤†) à¤‡) à¤ˆ)
 
 EXAMPLE (numbers stay digits):
-1. दो और दो का योग क्या है?
+1. à¤¦à¥‹ à¤”à¤° à¤¦à¥‹ à¤•à¤¾ à¤¯à¥‹à¤— à¤•à¥à¤¯à¤¾ à¤¹à¥ˆ?
 A) 3
 B) 4
 C) 5
@@ -320,8 +334,8 @@ Generate {n} questions now following the instructions exactly."""
     response = model.generate_content(prompt)
     text = response.text
 
-    if language.lower() in ["hindi", "odia"]:
-        text = correct_gemini_output(text, language)
+    if lang_normalized in ["hindi", "odia"]:
+        text = correct_gemini_output(text, language_display)
 
     return text
 
