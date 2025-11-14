@@ -31,7 +31,8 @@ SUPPORTED_LANGUAGES = {"hindi", "odia"}
 def ensure_supported_language(language: str):
     lang_normalized = (language or "").strip().lower()
     if lang_normalized not in SUPPORTED_LANGUAGES:
-        raise ValueError("Only Hindi and Odia are supported for MCQ generation.")
+        print(f"Warning: '{language}' is not supported. Defaulting to Hindi.")
+        return "hindi"
     return lang_normalized
 
 # ======================================================
@@ -49,7 +50,7 @@ def extract_text_from_pdf(pdf_path):
 # ======================================================
 def generate_mcqs(pdf_path, n, language, topic=None):
     lang_normalized = ensure_supported_language(language)
-    language_display = language or lang_normalized.title()
+    language_display = "Hindi" if lang_normalized == "hindi" else "Odia"
     pdf_text = extract_text_from_pdf(pdf_path)
 
     if not pdf_text:
@@ -118,8 +119,8 @@ D) ଚେନ୍ନାଇ
 Answer: B
 """
         special_formatting_block = f"""
-CRITICAL FOR {language.upper()} FORMATTING:
-- Write questions and options completely in {language}
+CRITICAL FOR {language_display.upper()} FORMATTING:
+- Write questions and options completely in {language_display}
 - Use ONLY English letters A), B), C), D) for every option
 - Use ONLY the phrase \"Answer: X\" where X is A, B, C, or D
 - Do NOT translate the option markers or the word \"Answer\"
@@ -172,16 +173,16 @@ BEGIN NOW:"""
     response = model.generate_content(prompt)
     text = response.text
 
-    debug_raw_gemini_output(text, language)
+    debug_raw_gemini_output(text, language_display)
 
-    if language.lower() in ["hindi", "odia"]:
-        text = correct_gemini_output(text, language)
+    if lang_normalized in ["hindi", "odia"]:
+        text = correct_gemini_output(text, language_display)
 
-    print(f"\n=== RAW GEMINI OUTPUT ({language}) ===")
+    print(f"\n=== RAW GEMINI OUTPUT ({language_display}) ===")
     print(text)
     print("=== END RAW OUTPUT ===\n")
     try:
-        outfile = f"gemini_output_{language}.txt"
+        outfile = f"gemini_output_{lang_normalized}.txt"
         with open(outfile, "w", encoding="utf-8") as f:
             f.write(text or "")
         print(f"Saved raw output to: {outfile}")
@@ -290,7 +291,7 @@ def generate_topic_mcqs(topic: str, n: int, language: str):
         raise ValueError("Topic is required for topic-only MCQ generation.")
 
     lang_normalized = ensure_supported_language(language)
-    language_display = language or lang_normalized.title()
+    language_display = "Hindi" if lang_normalized == "hindi" else "Odia"
 
     prompt = f"""You are an expert exam question generator. Create exactly {n} NEW multiple-choice questions focused strictly on the topic: "{topic}".
 
