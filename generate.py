@@ -564,6 +564,15 @@ def parse_mcq_text(text):
                 i += 1
                 continue
 
+            bare_option_match = re.match(r'^\)\s*(.+)$', line)
+            if bare_option_match:
+                next_letter = chr(65 + len(current_q['options']))
+                option_text = bare_option_match.group(1).strip()
+                current_q['options'].append(f"{next_letter}) {option_text}")
+                print(f"DEBUG: Added bare option {next_letter}) from line without marker")
+                i += 1
+                continue
+
             alt_option_match = re.match(r'^\(([A-D])\)\s*(.+)$', line, re.IGNORECASE)
             if alt_option_match:
                 marker = alt_option_match.group(1).upper()
@@ -601,7 +610,7 @@ def parse_mcq_text(text):
                     current_q['answer'] = f"Answer: {answer_letter}"
                     print(f"DEBUG: Found answer: {current_q['answer']}")
                 else:
-                    current_q['answer'] = f"Answer: {answer_text}"
+                    current_q['answer'] = f"Answer: {answer_text or 'Not provided'}"
 
                 questions.append(current_q)
                 current_q = None
