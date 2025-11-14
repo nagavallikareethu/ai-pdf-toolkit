@@ -75,10 +75,10 @@ def run_translation(pdf_path: str, target_lang: str) -> Tuple[str, Optional[str]
         
         # Map display name to code
         lang_map = {
-            "English": "en", "Telugu": "te", "Hindi": "hi", 
-            "Odia": "or", "Tamil": "ta"
+            "Hindi": "hi",
+            "Odia": "or",
         }
-        lang_code = lang_map.get(target_lang, "en")
+        lang_code = lang_map.get(target_lang, "hi")
         
         # Step 1: Extract PDF to JSON
         json_output = output_dir / "extracted_pdf.json"
@@ -339,8 +339,8 @@ def create_interface():
                             """
                         )
                         trans_lang = gr.Dropdown(
-                            choices=["English", "Telugu", "Hindi", "Odia", "Tamil"],
-                            value="Telugu",
+                            choices=["Hindi", "Odia"],
+                            value="Hindi",
                             label="Target Language",
                             info="Select the language for translation"
                         )
@@ -370,8 +370,8 @@ def create_interface():
                             """
                         )
                         sol_lang = gr.Dropdown(
-                            choices=["Telugu", "Hindi", "Odia", "Tamil", "Kannada", "English"],
-                            value="Telugu",
+                            choices=["Hindi", "Odia"],
+                            value="Hindi",
                             label="Output Language",
                             info="Language for solutions and explanations"
                         )
@@ -407,8 +407,8 @@ def create_interface():
                             info="Select whether to pull questions from the PDF or generate purely by topic"
                         )
                         mcq_lang = gr.Dropdown(
-                            choices=["English", "Telugu", "Hindi", "Odia"],
-                            value="English",
+                            choices=["Hindi", "Odia"],
+                            value="Hindi",
                             label="Target Language",
                             info="Language for generated questions"
                         )
