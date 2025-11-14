@@ -2264,6 +2264,24 @@ def translate_json_file(input_json: str,
         print(f"❌ Error saving file: {e}")
         return None
 
+
+class JSONTranslator:
+    """
+    Backwards-compatible wrapper matching the previous API that modules
+    like app_gradio.py rely on (translate.JSONTranslator()).
+    """
+
+    def __init__(self, output_dir: str = OUTPUT_DIR):
+        self.output_dir = output_dir
+
+    def translate_json_file(self, input_json: str, target_lang: str, lang_name: str):
+        return translate_json_file(
+            input_json=input_json,
+            target_lang=target_lang,
+            lang_name=lang_name,
+            output_dir=self.output_dir,
+        )
+
 # ============================================================
 # MAIN DRIVER - ENHANCED WITH SMART FILTERING (LEGACY CLI)
 # ============================================================
