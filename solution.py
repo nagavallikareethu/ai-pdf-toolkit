@@ -219,6 +219,11 @@ def solve_pages(pages):
     for page in tqdm(pages, desc="Solving pages"):
         before_page_results = len(results)
         text = str(page.get("text", "")).strip()
+        # Remove answer key sections that can create hallucinated questions
+        key_section = re.search(r'^\s*KEY\s*$', text, flags=re.MULTILINE)
+        if key_section:
+            print(f"Page {page['page']}: Detected KEY section, trimming subsequent text.")
+            text = text[:key_section.start()].rstrip()
         if not text:
             continue
 
