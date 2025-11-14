@@ -447,17 +447,20 @@ Return only 2-line explanation text.
                         options_section = f"\nOPTIONS: {pq['options']}" if pq.get('options') else ""
                         questions_text += f"\n\nQUESTION {pq['num']} (Page {pq['page']}):\n{pq['text']}{options_section}\n"
 
-                    prompt = f"""You are an expert exam solver. Solve these {len(batch)} questions completely.
+                    prompt = f"""You are an expert exam solver. Solve these {len(batch)} questions with 100% accuracy.
 
 PAGE CONTEXT:
 {context_snippet}
 {questions_text}
 
-IMPORTANT:
-1. Solve each question completely and provide the correct answer
-2. If options are provided, choose from them (1, 2, 3, 4, or 5)
-3. If no options, provide the calculated or descriptive answer
-4. Give a clear 2-3 line explanation showing your reasoning
+CRITICAL REQUIREMENTS:
+1. Solve each question step-by-step and verify your answer is correct
+2. Double-check all calculations - accuracy is essential
+3. If options are provided, identify the EXACT correct option number (1, 2, 3, 4, or 5)
+4. Match the answer format: if options are "1) ... 2) ...", return just the number like "2" or "3"
+5. For numerical answers without options, provide the exact calculated value
+6. Show your complete reasoning in the explanation - include all steps and calculations
+7. Verify your answer makes sense before submitting
 
 Return ONLY a JSON array. Format exactly:
 [
@@ -466,7 +469,7 @@ Return ONLY a JSON array. Format exactly:
     "question_text": "full question text here",
     "options": "1) opt1 2) opt2 3) opt3 4) opt4",
     "answer": "2",
-    "explanation": "step by step explanation here"
+    "explanation": "Step 1: [calculation]. Step 2: [calculation]. Therefore, the answer is option 2."
   }}
 ]
 
@@ -501,6 +504,35 @@ Return ONLY the JSON array:"""
                                 if q_num in existing_numbers:
                                     print(f"DEBUG: Skipping duplicate question {q_num} in batch results")
                                     continue
+
+                                # Validate and normalize answer format
+                                original_answer = str(item.get('answer', '')).strip()
+                                options_text = item.get('options', '') or batch[idx_item].get('options', '')
+                                
+                                # If options exist, ensure answer is a valid option number
+                                if options_text and original_answer:
+                                    # Extract option numbers from options text (e.g., "1) ... 2) ...")
+                                    option_numbers = re.findall(r'(\d+)\)', options_text)
+                                    if option_numbers:
+                                        # Try to extract number from answer
+                                        answer_num = re.search(r'\b([1-5])\b', original_answer)
+                                        if answer_num:
+                                            answer_val = answer_num.group(1)
+                                            if answer_val in option_numbers:
+                                                item['answer'] = answer_val
+                                            else:
+                                                print(f"WARNING: Answer '{original_answer}' doesn't match options for Q{q_num}, keeping as-is")
+                                        else:
+                                            # Try to find letter-based answer (A, B, C, D, E)
+                                            letter_match = re.search(r'\b([A-E])\b', original_answer, re.IGNORECASE)
+                                            if letter_match:
+                                                letter = letter_match.group(1).upper()
+                                                letter_to_num = {'A': '1', 'B': '2', 'C': '3', 'D': '4', 'E': '5'}
+                                                if letter in letter_to_num:
+                                                    num_val = letter_to_num[letter]
+                                                    if num_val in option_numbers:
+                                                        item['answer'] = num_val
+                                                        print(f"Converted answer from {letter} to {num_val} for Q{q_num}")
 
                                 existing_numbers.add(q_num)
                                 new_items.append(item)
