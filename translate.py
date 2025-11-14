@@ -2651,12 +2651,13 @@ class PDFGenerator:
                 pdf.line(x0, y0, x1, y1)
 
     def draw_vector_symbols(self, pdf, page_data):
-        page_h = _top_from_bottom(page_data)
+        page_h = _page_height_from(page_data)
         for s in page_data.get("vector_symbols", []):
             x0, y0o, x1, y1o = s['bbox']
             h = y1o - y0o
             y0 = _top_from_bottom(y0o, h, page_h)
-            pdf.setStrokeColor(colors.black); pdf.setLineWidth(1)
+            pdf.setStrokeColor(colors.black)
+            pdf.setLineWidth(1)
             pdf.rect(x0, y0, x1 - x0, h, stroke=1, fill=0)
 
 # -------------------- OVERLAY PDF GENERATOR (SAFE COVER) --------------------
