@@ -15,9 +15,8 @@ def _find_free_port(start: int = 7000, end: int = 9000) -> int:
 """
 Gradio UI that unifies translate.py, solution.py, generate.py
 Supported languages (UI labels) -> backend codes:
-  - English -> "en"
-  - Hindi   -> "hi"
-  - Odia    -> "or"
+  - Hindi -> "hi"
+  - Odia  -> "or"
 
 Usage:
   - Place this file in the same folder as translate.py, solution.py, generate.py
@@ -33,9 +32,8 @@ from pathlib import Path
 
 import gradio as gr
 
-# --- Language mapping (Option B) ---
+# --- Language mapping (restricted to Hindi & Odia) ---
 LANG_DISPLAY_TO_CODE = {
-    "English": "en",
     "Hindi": "hi",
     "Odia": "or",
 }
@@ -140,7 +138,12 @@ def run_translate_pipeline(input_pdf_path: str, target_lang_code: str):
 
     try:
         pipeline = translate_module.PDFProcessingPipeline()
-        result = pipeline.run_complete_pipeline(input_pdf_path)
+        result = pipeline.run_complete_pipeline(
+            pdf_path=input_pdf_path,
+            languages=[target_lang_code] if target_lang_code else None,
+            include_images=True,
+            image_handling="metadata",
+        )
         generated = result.get("generated_pdfs") or []
         if generated:
             return str(generated[0]), None
@@ -294,7 +297,7 @@ def ui_translate(uploaded, language_display):
     path = save_uploaded_file_to_temp(uploaded)
     if not path:
         return "Error: no file uploaded.", None
-    lang_code = LANG_DISPLAY_TO_CODE.get(language_display, "en")
+    lang_code = LANG_DISPLAY_TO_CODE.get(language_display, "hi")
     out_path, error = run_translate_pipeline(path, lang_code)
     if error:
         return f"Translation failed: {error}", None
@@ -307,7 +310,7 @@ def ui_solve(uploaded, language_display):
     path = save_uploaded_file_to_temp(uploaded)
     if not path:
         return "Error: no file uploaded.", None
-    lang_code = LANG_DISPLAY_TO_CODE.get(language_display, "en")
+    lang_code = LANG_DISPLAY_TO_CODE.get(language_display, "hi")
     out_path, error = run_solution_pipeline(path, lang_code)
     if error:
         return f"Solve failed: {error}", None
@@ -319,7 +322,7 @@ def ui_generate_mcqs(uploaded, count, language_display):
     path = save_uploaded_file_to_temp(uploaded)
     if not path:
         return "Error: no file uploaded.", None, None
-    lang_code = LANG_DISPLAY_TO_CODE.get(language_display, "en")
+    lang_code = LANG_DISPLAY_TO_CODE.get(language_display, "hi")
     out_path, error = run_generate_mcqs(path, int(count), lang_code)
     if error:
         return f"MCQ generation failed: {error}", None, None
@@ -341,7 +344,7 @@ def ui_generate_mcqs(uploaded, count, language_display):
 # --- Build Gradio UI ---
 def build_ui():
     with gr.Blocks(title="Unified AI PDF Toolkit (Gradio)", css=".gradio-container {max-width: 1100px;}") as demo:
-        gr.Markdown("# Unified AI PDF Toolkit (Translate | Solve | Generate MCQs)\nUpload one PDF and use any module. Languages: English, Hindi, Odia.")
+        gr.Markdown("# Unified AI PDF Toolkit (Translate | Solve | Generate MCQs)\nUpload one PDF and use any module. Languages: Hindi, Odia.")
         with gr.Row():
             uploader = gr.File(label="Upload PDF (shared across modules)", file_types=['.pdf'], interactive=True)
             file_info = gr.Textbox(label="File info", interactive=False)
@@ -351,7 +354,7 @@ def build_ui():
         with gr.Tabs():
             with gr.TabItem("Translate"):
                 gr.Markdown("Translate the uploaded PDF into the selected language.")
-                lang_translate = gr.Dropdown(list(LANG_DISPLAY_TO_CODE.keys()), value="English", label="Target language")
+                lang_translate = gr.Dropdown(list(LANG_DISPLAY_TO_CODE.keys()), value="Hindi", label="Target language")
                 translate_btn = gr.Button("Translate")
                 translate_status = gr.Textbox(label="Status", interactive=False)
                 translate_download = gr.File(label="Download translated output", interactive=False)
@@ -363,7 +366,7 @@ def build_ui():
 
             with gr.TabItem("Solve"):
                 gr.Markdown("Extract + Solve questions from uploaded PDF, then translate solutions.")
-                lang_solve = gr.Dropdown(list(LANG_DISPLAY_TO_CODE.keys()), value="English", label="Output language for solutions")
+                lang_solve = gr.Dropdown(list(LANG_DISPLAY_TO_CODE.keys()), value="Hindi", label="Output language for solutions")
                 solve_btn = gr.Button("Solve")
                 solve_status = gr.Textbox(label="Status", interactive=False)
                 solve_download = gr.File(label="Download solved output", interactive=False)
@@ -372,7 +375,7 @@ def build_ui():
             with gr.TabItem("Generate MCQs"):
                 gr.Markdown("Generate MCQs from the uploaded PDF.")
                 mcq_count = gr.Number(value=10, precision=0, label="Number of MCQs")
-                mcq_lang = gr.Dropdown(list(LANG_DISPLAY_TO_CODE.keys()), value="English", label="Target language")
+                mcq_lang = gr.Dropdown(list(LANG_DISPLAY_TO_CODE.keys()), value="Hindi", label="Target language")
                 mcq_btn = gr.Button("Generate MCQs")
                 mcq_status = gr.Textbox(label="Status", interactive=False)
                 mcq_preview = gr.Textbox(label="Preview / Generated Text", interactive=False, lines=12)
