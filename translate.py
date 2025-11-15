@@ -2300,6 +2300,86 @@ class JSONTranslator:
             output_dir=self.output_dir,
         )
 
+
+class PDFProcessingPipeline:
+    """
+    High-level orchestrator: extract PDF → translate JSON → rebuild PDF(s).
+    Used by the Gradio UI and CLI helpers.
+    """
+
+    def __init__(self, working_dir: str | Path = "outputs"):
+        self.converter = PDFToJSONConverter()
+        self.translator = JSONTranslator()
+        self.working_dir = Path(working_dir)
+        self.working_dir.mkdir(parents=True, exist_ok=True)
+
+    def _normalize_languages(self, languages):
+        if languages is None:
+            return ["hi"]
+        if isinstance(languages, (str, bytes)):
+            return [str(languages).strip()]
+        return [str(lang).strip() for lang in languages if str(lang).strip()]
+
+    def run_complete_pipeline(
+        self,
+        pdf_path: str | Path,
+        languages=None,
+        include_images: bool = True,
+        image_handling: str = "metadata",
+    ):
+        """
+        Returns a dict with keys: extracted_json, translations (list), generated_pdfs (list).
+        """
+        pdf_path = Path(pdf_path)
+        if not pdf_path.exists():
+            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+
+        langs = self._normalize_languages(languages)
+        if not langs:
+            langs = ["hi"]
+
+        base_name = pdf_path.stem
+        extracted_json = self.working_dir / f"{base_name}_extracted.json"
+
+        print(f"\n📄 Step 1/3: Extracting PDF → JSON ({pdf_path.name})")
+        self.converter.convert_pdf_to_json_enhanced(
+            str(pdf_path),
+            output_path=str(extracted_json),
+            include_images=include_images,
+            image_handling=image_handling,
+        )
+
+        results = {
+            "extracted_json": extracted_json,
+            "translations": [],
+            "generated_pdfs": [],
+        }
+
+        for lang_code in langs:
+            lang_code_norm = lang_code.lower()
+            lang_name = LANG_CODE_TO_NAME.get(lang_code_norm, lang_code_norm.title())
+            print(f"\n🌐 Step 2/3: Translating → {lang_name} ({lang_code_norm})")
+            translated_json = self.translator.translate_json_file(
+                str(extracted_json),
+                lang_code_norm,
+                lang_name,
+            )
+            if not translated_json:
+                continue
+            translated_json = Path(translated_json)
+            results["translations"].append(translated_json)
+
+            print(f"\n🖨️ Step 3/3: Rebuilding PDF for {lang_name}")
+            output_pdf = self.working_dir / f"{base_name}_{lang_code_norm}.pdf"
+            try:
+                pdf_gen = PDFGenerator(str(translated_json), str(output_pdf))
+                pdf_gen.generate_pdf()
+                results["generated_pdfs"].append(output_pdf)
+            except Exception as pdf_error:
+                print(f"⚠️ PDF generation failed for {lang_name}: {pdf_error}")
+
+        return results
+
 # ============================================================
 # MAIN DRIVER - ENHANCED WITH SMART FILTERING (LEGACY CLI)
 # ============================================================
