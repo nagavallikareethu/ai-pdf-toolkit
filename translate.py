@@ -31,6 +31,24 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
+# Ensure stdout/stderr can emit Unicode (handles emoji logs on Windows cmd/PowerShell)
+import sys
+import io
+
+def _ensure_utf8_stdout():
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if not stream or not getattr(stream, "encoding", None):
+            continue
+        try:
+            if stream.encoding.lower() != "utf-8":
+                wrapper = io.TextIOWrapper(stream.buffer, encoding="utf-8", errors="replace")
+                setattr(sys, stream_name, wrapper)
+        except Exception:
+            pass
+
+_ensure_utf8_stdout()
+
 
 # ======================================================================
 # PDF â†’ JSON Converter
