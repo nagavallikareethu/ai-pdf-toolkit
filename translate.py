@@ -2957,6 +2957,31 @@ def main():
         output_dir=args.output_dir,
         overlay=not args.no_overlay
     )
+def json_to_pdf(input_json_path, output_pdf_path):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+    import json
+
+    with open(input_json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    c = canvas.Canvas(output_pdf_path, pagesize=A4)
+    width, height = A4
+    y = height - 40
+
+    for page in data.get("pages", []):
+        for item in page.get("text_blocks", []):
+            text = item.get("text", "")
+            for line in text.split("\n"):
+                c.drawString(40, y, line)
+                y -= 18
+                if y < 40:
+                    c.showPage()
+                    y = height - 40
+        c.showPage()
+
+    c.save()
+    return output_pdf_path
 
 
 if __name__ == "__main__":
