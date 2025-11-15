@@ -116,96 +116,25 @@ def file_details(path):
 
 def run_translate_pipeline(input_pdf_path: str, target_lang_code: str):
     """
-    Attempt to call the translation pipeline in translate.py.
-    We try multiple common function names and fall back to helpful errors.
-    Expected behavior: produce a translated PDF path or a translated JSON that we then attempt to render/download.
+    Run the real translation pipeline from translate.py (extract → translate → rebuild).
+    Returns the generated PDF path (or translated JSON) and an optional error message.
     """
     if not translate_module:
         return None, "translate.py not available (import failed)."
 
+    if not hasattr(translate_module, "PDFProcessingPipeline"):
+        return None, "translate.py does not expose PDFProcessingPipeline."
+
     try:
-        # First try a function we saw in snippets: translate_json_preserve_structure
-        # That function writes translated JSON. We'll try to call it and then detect outputs.
-        base_tmp = tempfile.mkdtemp(prefix="translate_out_")
-        # try to call functions in translate module
-        # If translate.py exposes a high level function like translate_pdf or main_translate, try those
-        if hasattr(translate_module, "translate_pdf"):
-            out_pdf = os.path.join(base_tmp, "translated.pdf")
-            # try to call translate_pdf(input, output, lang_code)
-            try:
-                translate_module.translate_pdf(input_pdf_path, out_pdf, target_lang_code)
-                return out_pdf, None
-            except Exception:
-                # maybe signature (input, lang)
-                try:
-                    translate_module.translate_pdf(input_pdf_path, target_lang_code)
-                    # assume it writes to same dir
-                    # attempt to find a new file in dir
-                except Exception:
-                    pass
-
-        # Try translate_json_preserve_structure: it wants extracted_json_path -> translated_json_path
-        if hasattr(translate_module, "translate_json_preserve_structure"):
-            # We need an extracted JSON - many pipelines expose a converter; try to create one
-            extracted_json = os.path.join(base_tmp, "extracted.json")
-            translated_json = os.path.join(base_tmp, "translated.json")
-            # If translate module has an extractor like PDFToJSONConverter, try to use it
-            if hasattr(translate_module, "PDFToJSONConverter"):
-                conv = translate_module.PDFToJSONConverter()
-                # some converters provide a method to convert directly; try multiple naming
-                if hasattr(conv, "convert_pdf_to_json"):
-                    conv.convert_pdf_to_json(input_pdf_path, extracted_json)
-                elif hasattr(conv, "extract_pdf_to_json"):
-                    conv.extract_pdf_to_json(input_pdf_path, extracted_json)
-                else:
-                    # try a generic extract call
-                    # Some scripts expect filenames; if none available, write a simple fallback JSON
-                    with open(extracted_json, "w", encoding="utf-8") as f:
-                        f.write('{"pages": []}')
-            else:
-                # fallback: write a minimal JSON
-                with open(extracted_json, "w", encoding="utf-8") as f:
-                    f.write('{"pages": []}')
-
-            # call translator
-            try:
-                translated_data = translate_module.translate_json_preserve_structure(
-                    extracted_json, translated_json, target_lang_code
-                )
-            except TypeError:
-                # maybe signature different (source, target) or language code 'hi' vs 'hindi'
-                try:
-                    translated_data = translate_module.translate_json_preserve_structure(
-                        extracted_json, translated_json, target_lang_code
-                    )
-                except Exception as e:
-                    raise e
-
-            # If translation wrote a translated JSON, attempt to find a PDF creation method
-            if os.path.exists(translated_json):
-                # try to find a PDF render method
-                if hasattr(translate_module, "json_to_pdf") or hasattr(translate_module, "render_pdf_from_json"):
-                    render_func = getattr(translate_module, "json_to_pdf", None) or getattr(translate_module, "render_pdf_from_json")
-                    out_pdf = os.path.join(base_tmp, "translated.pdf")
-                    try:
-                        render_func(translated_json, out_pdf)
-                        return out_pdf, None
-                    except Exception:
-                        pass
-
-                # fallback: return the translated JSON as a downloadable file
-                return translated_json, None
-
-        # If nothing above works, look for a top-level 'main' or 'run' function
-        if hasattr(translate_module, "main"):
-            try:
-                # main may read sys.argv; we avoid complex calls
-                translate_module.main(input_pdf_path, target_lang_code)
-                # try to find output in current dir
-            except Exception:
-                pass
-
-        return None, "translate.py didn't expose a direct PDF output function I could call. Check translate module for a top-level PDF writer function or let me know the function name that produces the PDF."
+        pipeline = translate_module.PDFProcessingPipeline()
+        result = pipeline.run_complete_pipeline(input_pdf_path)
+        generated = result.get("generated_pdfs") or []
+        if generated:
+            return str(generated[0]), None
+        translations = result.get("translations") or []
+        if translations:
+            return str(translations[0]), "Translated JSON created (no PDF renderer available)."
+        return None, "Pipeline completed but no output files were produced."
     except Exception as e:
         tb = traceback.format_exc()
         return None, f"Exception during translate pipeline: {e}\n{tb}"
