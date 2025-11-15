@@ -382,19 +382,18 @@ if __name__ == "__main__":
         # Convert version string "4.19.2" -> major=4
         major_ver = int(ver.split(".")[0])
 
+        port = int(os.environ.get("PORT", "7860"))
         if major_ver >= 4:
-            # Newer gradio (4.x and up)
-            print("[INFO] Using Gradio 4.x launcher")
-            demo.queue().launch(server_name="127.0.0.1", share=False)
-
+            print(f"[INFO] Using Gradio 4.x launcher on 0.0.0.0:{port}")
+            demo.queue().launch(server_name="0.0.0.0", server_port=port, share=False)
         else:
-            # Older gradio (3.x or earlier)
-            print("[INFO] Using Gradio 3.x launcher (no queue with arguments)")
-            demo.queue().launch(server_name="127.0.0.1", share=False)
+            print(f"[INFO] Using Gradio 3.x launcher on 0.0.0.0:{port}")
+            demo.queue().launch(server_name="0.0.0.0", server_port=port, share=False)
 
     except Exception as e:
         # Fallback: safest possible launcher
         print("[WARN] Auto-detection failed, using fallback launcher:", e)
-        demo.queue().launch(server_name="127.0.0.1", share=False)
+        port = int(os.environ.get("PORT", "7860"))
+        demo.queue().launch(server_name="0.0.0.0", server_port=port, share=False)
 
 
