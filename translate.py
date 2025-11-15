@@ -50,6 +50,48 @@ def _ensure_utf8_stdout():
 _ensure_utf8_stdout()
 
 
+# ----------------------------------------------------------------------
+# Global paths / fonts
+# ----------------------------------------------------------------------
+BASE_DIR = Path(__file__).parent.resolve()
+FONTS_DIR = BASE_DIR / "fonts"
+
+DEFAULT_FONT_FILES = {
+    "telugu": "NotoSansTelugu-Regular.ttf",
+    "hindi": "TiroDevanagariHindi-Regular.ttf",
+    "odia": "NotoSansOriya-Regular.ttf",
+}
+
+
+def _candidate_font_paths(filename: str, lang: str):
+    yield FONTS_DIR / filename
+    yield BASE_DIR / filename
+    yield Path(filename)
+    if lang == "odia":
+        if os.name == "nt":
+            yield Path("C:/Windows/Fonts/Nirmala.ttf")
+            yield Path("C:/Windows/Fonts/NirmalaB.ttf")
+        yield Path("fonts/NotoSansOriya.ttf")
+        yield Path("fonts/AnekOdia-Regular.ttf")
+
+
+def _build_font_map():
+    font_map = {}
+    for lang, filename in DEFAULT_FONT_FILES.items():
+        resolved = None
+        for candidate in _candidate_font_paths(filename, lang):
+            if candidate and candidate.exists():
+                resolved = candidate
+                break
+        if not resolved:
+            resolved = FONTS_DIR / filename
+        font_map[lang] = str(resolved)
+    return font_map
+
+
+FONTS = _build_font_map()
+
+
 # ======================================================================
 # PDF â†’ JSON Converter
 # ======================================================================
@@ -2470,13 +2512,6 @@ def translator_cli_main():
 # ======================================================================
 # PDF Creation
 # ======================================================================
-# -------------------- CONFIG --------------------
-FONTS = {
-    "telugu": r"E:\PDFExtraction\fonts\NotoSansTelugu-Regular.ttf",
-    "hindi": r"E:\PDFExtraction\fonts\TiroDevanagariHindi-Regular.ttf",
-    "odia": r"E:\PDFExtraction\fonts\AnekOdia-Regular.ttf"
-}
-
 # -------------------- UTILS --------------------
 def clean(s: str) -> str:
     if not s:
@@ -2880,8 +2915,8 @@ class OverlayPDFGenerator:
 
 # -------------------- CLI / Example --------------------
 def pdf_creation_cli_main():
-    JSON_PATH = r"E:\PDFExtraction\translated_jsons\sbi_extracted_hi.json"
-    ORIGINAL_PDF = r"E:\PDFExtraction\SBI Clerk Prelims.pdf"
+    JSON_PATH = str((BASE_DIR / "translated_jsons" / "sbi_extracted_hi.json").resolve())
+    ORIGINAL_PDF = str((BASE_DIR / "SBI Clerk Prelims.pdf").resolve())
     OUTPUT_OVERLAY = "output_translated_overlay.pdf"
     # Use OverlayPDFGenerator (recommended)
     if not os.path.exists(JSON_PATH):

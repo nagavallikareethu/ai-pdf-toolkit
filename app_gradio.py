@@ -1,3 +1,16 @@
+def _is_port_free(port: int) -> bool:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", port)) != 0
+
+
+def _find_free_port(start: int = 7000, end: int = 9000) -> int:
+    import socket
+    for port in range(start, end):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", port)) != 0:
+                return port
+    raise OSError("No free port found in range.")
 # gradio_app.py
 """
 Gradio UI that unifies translate.py, solution.py, generate.py
@@ -383,6 +396,8 @@ if __name__ == "__main__":
         major_ver = int(ver.split(".")[0])
 
         port = int(os.environ.get("PORT", "7860"))
+        if not _is_port_free(port):
+            port = _find_free_port()
         if major_ver >= 4:
             print(f"[INFO] Using Gradio 4.x launcher on 0.0.0.0:{port}")
             demo.queue().launch(server_name="0.0.0.0", server_port=port, share=False)
@@ -394,6 +409,8 @@ if __name__ == "__main__":
         # Fallback: safest possible launcher
         print("[WARN] Auto-detection failed, using fallback launcher:", e)
         port = int(os.environ.get("PORT", "7860"))
+        if not _is_port_free(port):
+            port = _find_free_port()
         demo.queue().launch(server_name="0.0.0.0", server_port=port, share=False)
 
 
