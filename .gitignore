@@ -38,7 +38,11 @@ temp/
 !VERIFICATION_REPORT.md
 !QUICK_REFERENCE.md
 !FIXES_APPLIED.md
+!API_DIAGNOSIS_REPORT.md
 !requirements.txt
+
+# Test files
+test_*.py
 
 # OS
 .DS_Store

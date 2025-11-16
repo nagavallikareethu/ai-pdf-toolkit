@@ -175,7 +175,7 @@ def extract_pdf(input_pdf, output_json="extracted_data.json", output_image_folde
 # -------------------------
 # Solver (SymPy first, LLM fallback)
 # -------------------------
-def call_llm_with_retry(prompt, max_retries=3, timeout=30):
+def call_llm_with_retry(prompt, max_retries=3, timeout=60):
     """Helper function to call LLM with retry logic and timeout"""
     import time
     for attempt in range(max_retries):
@@ -184,19 +184,47 @@ def call_llm_with_retry(prompt, max_retries=3, timeout=30):
                 prompt,
                 request_options={"timeout": timeout}
             )
-            if response and response.text:
+            
+            # Check if response was blocked by safety filters
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                feedback = str(response.prompt_feedback)
+                if 'BLOCK' in feedback.upper():
+                    print(f"⚠️ Response blocked by safety filters: {feedback}")
+                    return ""
+            
+            # Check if response has text
+            if response and hasattr(response, 'text') and response.text:
                 return response.text.strip()
+            
+            # If response exists but no text, check candidates
+            if response and hasattr(response, 'candidates'):
+                if response.candidates:
+                    print(f"⚠️ Response received but no text. Candidates: {len(response.candidates)}")
+                else:
+                    print(f"⚠️ Empty response received (no candidates)")
+            
             return ""
+            
+        except AttributeError as e:
+            # Handle cases where response.text doesn't exist
+            print(f"⚠️ Response structure issue: {e}")
+            return ""
+            
         except Exception as e:
             error_str = str(e).lower()
             # Check if it's a rate limit error
             if "rate" in error_str or "quota" in error_str or "429" in error_str:
                 wait_time = 10 * (attempt + 1)  # Longer wait for rate limits
                 print(f"⚠️ Rate limit hit (attempt {attempt+1}/{max_retries}), waiting {wait_time}s...")
+            elif "timeout" in error_str:
+                print(f"⚠️ Request timeout (attempt {attempt+1}/{max_retries})")
+                wait_time = 5
             elif attempt < max_retries - 1:
                 wait_time = 2 ** attempt  # Exponential backoff
-                print(f"⚠️ API call failed (attempt {attempt+1}/{max_retries}), retrying in {wait_time}s...")
+                print(f"⚠️ API call failed (attempt {attempt+1}/{max_retries}): {str(e)[:100]}")
+                print(f"   Retrying in {wait_time}s...")
             else:
+                print(f"❌ All retries exhausted. Last error: {str(e)[:200]}")
                 raise e
             
             if attempt < max_retries - 1:
