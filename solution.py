@@ -345,10 +345,34 @@ def build_html(pages, lang):
         line-height: 1.6;
         color: #111;
     }}
-    h1 {{ text-align:center; color:#003366; font-size:18pt; margin-bottom:20px; }}
-    h2 {{ color:#001c80; font-size:15pt; margin:10px 0 5px 0; }}
-    p {{ margin: 0 0 6pt 0; white-space: pre-wrap; }}
-    .question {{ margin-bottom: 18pt; border-bottom:1px solid #ccc; padding-bottom:8pt; }}
+    h1 {{ 
+        text-align:center; 
+        color:#003366; 
+        font-size:18pt; 
+        margin-bottom:20px;
+        font-family: {body_font} !important;
+        font-weight: bold;
+    }}
+    h2 {{ 
+        color:#001c80; 
+        font-size:15pt; 
+        margin:10px 0 5px 0;
+        font-family: {body_font} !important;
+        font-weight: bold;
+    }}
+    p {{ 
+        margin: 0 0 6pt 0; 
+        white-space: pre-wrap;
+        font-family: {body_font};
+    }}
+    .question {{ 
+        margin-bottom: 18pt; 
+        border-bottom:1px solid #ccc; 
+        padding-bottom:8pt;
+    }}
+    * {{
+        font-family: {body_font};
+    }}
     """
 
     parts = ["<!doctype html><html><head><meta charset='utf-8'>",
@@ -499,9 +523,18 @@ def render_pdf_reportlab_fallback(data, lang, output_pdf):
     }
     ans_label, exp_label, title_label = lang_labels.get(lang.lower(), lang_labels.get("hindi", ("Answer", "Explanation", "Translated Question Paper")))
     
-    # Title
-    c.setFont(font_name, 18)
-    c.drawCentredString(width / 2, y, title_label)
+    # Title - ensure font is set correctly
+    try:
+        c.setFont(font_name, 18)
+        # Try to draw title with the registered font
+        c.drawCentredString(width / 2, y, title_label)
+        print(f"✅ Rendered title with font: {font_name}")
+    except Exception as title_error:
+        # Fallback to Helvetica if font fails
+        print(f"⚠️ Failed to render title with {font_name}: {title_error}")
+        print(f"   Falling back to Helvetica")
+        c.setFont("Helvetica", 18)
+        c.drawCentredString(width / 2, y, title_label)
     y -= 40
     
     # Render each item
