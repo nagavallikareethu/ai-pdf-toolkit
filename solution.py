@@ -367,14 +367,67 @@ async def render_pdf_from_data(data, lang, output_pdf):
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html_doc)
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch()
-        page = await browser.new_page()
-        await page.goto(pathlib.Path(html_path).resolve().as_uri())
-        await page.pdf(path=output_pdf, format="A4", margin={"top":"1cm","right":"1cm","bottom":"1cm","left":"1cm"}, print_background=True)
-        await browser.close()
-
-    print(f"✅ PDF rendered → {output_pdf}")
+    try:
+        async with async_playwright() as p:
+            try:
+                browser = await p.chromium.launch()
+            except Exception as launch_error:
+                error_msg = str(launch_error)
+                if "Executable doesn't exist" in error_msg or "playwright install" in error_msg.lower():
+                    print("⚠️ Playwright Chromium browser not found. Attempting to install...")
+                    try:
+                        import subprocess
+                        import sys
+                        # Try to install Playwright browsers
+                        result = subprocess.run(
+                            [sys.executable, "-m", "playwright", "install", "chromium"],
+                            capture_output=True,
+                            text=True,
+                            timeout=300  # 5 minute timeout
+                        )
+                        if result.returncode == 0:
+                            print("✅ Playwright Chromium installed successfully. Retrying...")
+                            browser = await p.chromium.launch()
+                        else:
+                            raise Exception(
+                                f"Failed to install Playwright Chromium.\n"
+                                f"Error: {result.stderr}\n"
+                                f"Please run 'playwright install chromium' manually.\n"
+                                f"On Render, ensure your build command includes: playwright install chromium"
+                            )
+                    except subprocess.TimeoutExpired:
+                        raise Exception(
+                            "Playwright Chromium installation timed out.\n"
+                            "Please run 'playwright install chromium' manually."
+                        )
+                    except Exception as install_error:
+                        raise Exception(
+                            f"Failed to install Playwright Chromium: {install_error}\n"
+                            f"Original error: {launch_error}\n"
+                            f"Please ensure Playwright browsers are installed:\n"
+                            f"  - Run: playwright install chromium\n"
+                            f"  - Or check Render build command includes: playwright install chromium"
+                        )
+                else:
+                    # Re-raise if it's a different error
+                    raise
+            
+            page = await browser.new_page()
+            await page.goto(pathlib.Path(html_path).resolve().as_uri())
+            await page.pdf(path=output_pdf, format="A4", margin={"top":"1cm","right":"1cm","bottom":"1cm","left":"1cm"}, print_background=True)
+            await browser.close()
+            print(f"✅ PDF rendered → {output_pdf}")
+            
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ PDF rendering failed: {error_msg}")
+        raise Exception(
+            f"Failed to render PDF: {error_msg}\n\n"
+            f"If you see 'Executable doesn't exist' or 'playwright install' error:\n"
+            f"  1. Ensure your Render build command includes: playwright install chromium\n"
+            f"  2. Or run locally: playwright install chromium\n"
+            f"  3. Check that Playwright is installed: pip install playwright"
+        ) from e
 
 # -------------------------
 # Main CLI flow
