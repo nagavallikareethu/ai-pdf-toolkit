@@ -29,6 +29,11 @@ import google.generativeai as genai
 
 # pdf rendering
 from playwright.async_api import async_playwright
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from pathlib import Path as PathLib
 
 # -------------------------
 # Load environment
@@ -420,14 +425,130 @@ async def render_pdf_from_data(data, lang, output_pdf):
             
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ PDF rendering failed: {error_msg}")
-        raise Exception(
-            f"Failed to render PDF: {error_msg}\n\n"
-            f"If you see 'Executable doesn't exist' or 'playwright install' error:\n"
-            f"  1. Ensure your Render build command includes: playwright install chromium\n"
-            f"  2. Or run locally: playwright install chromium\n"
-            f"  3. Check that Playwright is installed: pip install playwright"
-        ) from e
+        print(f"❌ Playwright PDF rendering failed: {error_msg}")
+        print("⚠️ Falling back to ReportLab (limited font support)...")
+        
+        # Try ReportLab fallback
+        try:
+            render_pdf_reportlab_fallback(data, lang, output_pdf)
+            print(f"✅ PDF rendered using ReportLab fallback → {output_pdf}")
+            return
+        except Exception as fallback_error:
+            print(f"❌ ReportLab fallback also failed: {fallback_error}")
+            raise Exception(
+                f"Failed to render PDF with both Playwright and ReportLab.\n\n"
+                f"Playwright error: {error_msg}\n"
+                f"ReportLab error: {fallback_error}\n\n"
+                f"Troubleshooting:\n"
+                f"  1. Ensure your Render build command includes: playwright install chromium\n"
+                f"  2. Or run locally: playwright install chromium\n"
+                f"  3. Check that fonts exist in fonts/ directory"
+            ) from fallback_error
+
+
+def render_pdf_reportlab_fallback(data, lang, output_pdf):
+    """Fallback PDF rendering using ReportLab (limited Indic font support)"""
+    # Font mapping for ReportLab
+    BASE_DIR = PathLib(__file__).parent.resolve()
+    FONTS_DIR = BASE_DIR / "fonts"
+    
+    font_map = {
+        "hindi": ("NotoSansDevanagari", str(FONTS_DIR / "NotoSansDevanagari-Regular.ttf")),
+        "odia": ("NotoSansOriya", str(FONTS_DIR / "NotoSansOriya-Regular.ttf")),
+        "telugu": ("NotoSansTelugu", str(FONTS_DIR / "NotoSansTelugu-Regular.ttf")),
+    }
+    
+    font_name, font_file = font_map.get(lang.lower(), ("Helvetica", None))
+    
+    # Register font if available
+    if font_file and os.path.exists(font_file):
+        try:
+            pdfmetrics.registerFont(TTFont(font_name, font_file))
+            print(f"✅ Registered font: {font_name}")
+        except Exception as font_error:
+            print(f"⚠️ Failed to register font {font_name}: {font_error}")
+            font_name = "Helvetica"
+    else:
+        font_name = "Helvetica"
+        print(f"⚠️ Font file not found for {lang}, using Helvetica")
+    
+    # Create PDF with ReportLab
+    c = canvas.Canvas(output_pdf, pagesize=A4)
+    c.setFont(font_name, 13)
+    width, height = A4
+    y = height - 80
+    
+    # Labels
+    lang_labels = {
+        "telugu": ("సమాధానం", "వివరణ", "తెలుగులో అనువదించిన ప్రశ్నపత్రం"),
+        "hindi":  ("उत्तर", "व्याख्या", "हिंदी में अनुवादित प्रश्नपत्र"),
+        "odia":   ("ଉତ୍ତର", "ବ୍ୟାଖ୍ୟା", "ଓଡ଼ିଆରେ ଅନୁବାଦିତ ପ୍ରଶ୍ନପତ୍ର"),
+    }
+    ans_label, exp_label, title_label = lang_labels.get(lang.lower(), lang_labels.get("hindi", ("Answer", "Explanation", "Translated Question Paper")))
+    
+    # Title
+    c.setFont(font_name, 18)
+    c.drawCentredString(width / 2, y, title_label)
+    y -= 40
+    
+    # Render each item
+    suffix = f"_{lang.lower()}"
+    for i, item in enumerate(data, start=1):
+        if y < 100:  # New page if needed
+            c.showPage()
+            c.setFont(font_name, 13)
+            y = height - 80
+        
+        q_no = clean(item.get("question_number", str(i)))
+        q_text = clean(item.get(f"question_text{suffix}", "")) or clean(item.get("question_text", ""))
+        ans = clean(item.get(f"answer{suffix}", "")) or clean(item.get("answer", ""))
+        exp = clean(item.get(f"explanation{suffix}", "")) or clean(item.get("explanation", ""))
+        
+        if not (q_text or ans or exp):
+            continue
+        
+        # Question number
+        c.setFont(font_name, 14)
+        c.drawString(60, y, f"Q{q_no}.")
+        y -= 25
+        
+        # Question text
+        if q_text:
+            c.setFont(font_name, 12)
+            lines = q_text.split('\n')
+            for line in lines:
+                if y < 80:
+                    c.showPage()
+                    c.setFont(font_name, 12)
+                    y = height - 80
+                c.drawString(80, y, line[:85])  # Limit line length
+                y -= 18
+        
+        # Answer
+        if ans:
+            c.setFont(font_name, 12)
+            if y < 80:
+                c.showPage()
+                c.setFont(font_name, 12)
+                y = height - 80
+            c.drawString(80, y, f"{ans_label}: {ans[:80]}")
+            y -= 18
+        
+        # Explanation
+        if exp:
+            c.setFont(font_name, 11)
+            exp_lines = exp.split('\n')
+            for line in exp_lines:
+                if y < 80:
+                    c.showPage()
+                    c.setFont(font_name, 11)
+                    y = height - 80
+                c.drawString(80, y, f"{exp_label}: {line[:75]}")
+                y -= 16
+        
+        y -= 10  # Spacing between questions
+    
+    c.save()
 
 # -------------------------
 # Main CLI flow
