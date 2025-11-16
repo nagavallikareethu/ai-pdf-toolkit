@@ -945,7 +945,49 @@ async def save_pdf_playwright(text, outpath, lang):
         
         # Render PDF with Playwright
         async with async_playwright() as p:
-            browser = await p.chromium.launch()
+            try:
+                browser = await p.chromium.launch()
+            except Exception as launch_error:
+                error_msg = str(launch_error)
+                if "Executable doesn't exist" in error_msg or "playwright install" in error_msg.lower():
+                    print("⚠️ Playwright Chromium browser not found. Attempting to install...")
+                    try:
+                        import subprocess
+                        import sys
+                        # Try to install Playwright browsers
+                        result = subprocess.run(
+                            [sys.executable, "-m", "playwright", "install", "chromium"],
+                            capture_output=True,
+                            text=True,
+                            timeout=300  # 5 minute timeout
+                        )
+                        if result.returncode == 0:
+                            print("✅ Playwright Chromium installed successfully. Retrying...")
+                            browser = await p.chromium.launch()
+                        else:
+                            raise Exception(
+                                f"Failed to install Playwright Chromium.\n"
+                                f"Error: {result.stderr}\n"
+                                f"Please run 'playwright install chromium' manually.\n"
+                                f"On Render, ensure your build command includes: playwright install chromium"
+                            )
+                    except subprocess.TimeoutExpired:
+                        raise Exception(
+                            "Playwright Chromium installation timed out.\n"
+                            "Please run 'playwright install chromium' manually."
+                        )
+                    except Exception as install_error:
+                        raise Exception(
+                            f"Failed to install Playwright Chromium: {install_error}\n"
+                            f"Original error: {launch_error}\n"
+                            f"Please ensure Playwright browsers are installed:\n"
+                            f"  - Run: playwright install chromium\n"
+                            f"  - Or check Render build command includes: playwright install chromium"
+                        )
+                else:
+                    # Re-raise if it's a different error
+                    raise
+            
             page = await browser.new_page()
             await page.goto(pathlib.Path(html_path).resolve().as_uri())
             await page.pdf(
@@ -958,7 +1000,10 @@ async def save_pdf_playwright(text, outpath, lang):
         
         return True
     except Exception as e:
-        print(f"Playwright rendering failed: {e}. Trying ReportLab fallback...")
+        error_msg = str(e)
+        print(f"Playwright rendering failed: {error_msg}")
+        if "Executable doesn't exist" in error_msg or "playwright install" in error_msg.lower():
+            print("⚠️ Falling back to ReportLab (limited font support)...")
         return False
 
 def save_pdf_reportlab(text, outpath, lang):
