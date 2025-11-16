@@ -32,9 +32,12 @@ temp/
 *.swp
 *.swo
 
-# Documentation (keep only README.md)
+# Documentation (keep important docs)
 *.md
 !README.md
+!VERIFICATION_REPORT.md
+!QUICK_REFERENCE.md
+!FIXES_APPLIED.md
 !requirements.txt
 
 # OS

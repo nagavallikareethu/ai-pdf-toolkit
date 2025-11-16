@@ -1,14 +1,26 @@
-﻿#!/usr/bin/env python3
-# pipeline_no_ocr.py
+﻿
 """
 Unified pipeline (NO OCR):
 1) Extract text + images from input PDF (PyMuPDF)
 2) Solve equations via SymPy (simple) or fallback to Gemini LLM for MCQs
 3) Translate solved items into selected language via Gemini
 4) Render final translated JSON -> PDF via Playwright
+
+Features:
+- Secure equation solving (uses sympify instead of eval)
+- Automatic retry logic with exponential backoff for API calls
+- Comprehensive input validation and error handling
+- Font fallback support for multiple Indic languages
+- Progress tracking with detailed status messages
+
+Requirements:
+- GENAI_API_KEY and GENAI_MODEL in a .env file
+- For PDF rendering: run 'playwright install chromium'
+- Font files in fonts/ directory (optional, will use fallback if missing)
+
 Notes:
-- Final PDF contains translated text (no images embedded).
-- Requires GENAI_API_KEY and GENAI_MODEL in a .env file.
+- Final PDF contains translated text (no images embedded)
+- Supports Telugu, Hindi, Odia, Tamil, Kannada, Gujarati, Marathi, Bengali, English
 """
 import os
 import json
@@ -24,7 +36,7 @@ from tqdm import tqdm
 import fitz  # PyMuPDF
 
 # solving
-from sympy import symbols, Eq, solve
+from sympy import symbols, Eq, solve, sympify, SympifyError
 import google.generativeai as genai
 
 # pdf rendering
@@ -46,11 +58,22 @@ if not API_KEY:
     print("❌ Please set GENAI_API_KEY in a .env file in this folder.")
     print("Example .env contents:")
     print("GENAI_API_KEY=your_gemini_api_key_here")
-    print("GENAI_MODEL=models/gemini-2.5-flash")
+    print("GENAI_MODEL=models/gemini-2.0-flash-exp")
     raise SystemExit(1)
 
+# Validate model name format
+if not MODEL_NAME.startswith("models/"):
+    print(f"⚠️ Warning: MODEL_NAME '{MODEL_NAME}' doesn't start with 'models/'")
+    print("   Common models: models/gemini-2.0-flash-exp, models/gemini-1.5-pro")
+
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel(MODEL_NAME)
+try:
+    model = genai.GenerativeModel(MODEL_NAME)
+    print(f"✅ Using model: {MODEL_NAME}")
+except Exception as model_error:
+    print(f"❌ Failed to initialize model '{MODEL_NAME}': {model_error}")
+    print("   Please check your GENAI_MODEL in .env file")
+    raise SystemExit(1)
 
 # -------------------------
 # Helpers
@@ -89,13 +112,13 @@ def solve_math_equation(equation_text: str):
             return None
         lhs, rhs = clean_text.split("=", 1)
         # naive insertion of '*' for things like 2x -> 2*x
-        lhs = re.sub(r"(?<=\d)x", "*x", lhs)
-        rhs = re.sub(r"(?<=\d)x", "*x", rhs)
-        # attempt to evaluate both sides as Python expressions (works for simple numeric forms)
-        eq = Eq(eval(lhs), eval(rhs))
+        lhs = re.sub(r"(?<=\d)x", "*x", lhs.lower())
+        rhs = re.sub(r"(?<=\d)x", "*x", rhs.lower())
+        # Use sympify instead of eval for security (prevents code injection)
+        eq = Eq(sympify(lhs, locals={'x': x}), sympify(rhs, locals={'x': x}))
         solution = solve(eq, x)
         return solution
-    except Exception:
+    except (SympifyError, Exception):
         return None
 
 # -------------------------
@@ -103,6 +126,16 @@ def solve_math_equation(equation_text: str):
 # -------------------------
 def extract_pdf(input_pdf, output_json="extracted_data.json", output_image_folder="extracted_images"):
     os.makedirs(output_image_folder, exist_ok=True)
+    
+    # Validate PDF file
+    if not os.path.exists(input_pdf):
+        raise FileNotFoundError(f"PDF file not found: {input_pdf}")
+    
+    # Check file size (warn if > 50MB)
+    file_size_mb = os.path.getsize(input_pdf) / (1024 * 1024)
+    if file_size_mb > 50:
+        print(f"⚠️ Large PDF file ({file_size_mb:.1f} MB) - this may take a while...")
+    
     try:
         doc = fitz.open(input_pdf)
     except Exception as e:
@@ -142,9 +175,46 @@ def extract_pdf(input_pdf, output_json="extracted_data.json", output_image_folde
 # -------------------------
 # Solver (SymPy first, LLM fallback)
 # -------------------------
+def call_llm_with_retry(prompt, max_retries=3, timeout=30):
+    """Helper function to call LLM with retry logic and timeout"""
+    import time
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(
+                prompt,
+                request_options={"timeout": timeout}
+            )
+            if response and response.text:
+                return response.text.strip()
+            return ""
+        except Exception as e:
+            error_str = str(e).lower()
+            # Check if it's a rate limit error
+            if "rate" in error_str or "quota" in error_str or "429" in error_str:
+                wait_time = 10 * (attempt + 1)  # Longer wait for rate limits
+                print(f"⚠️ Rate limit hit (attempt {attempt+1}/{max_retries}), waiting {wait_time}s...")
+            elif attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # Exponential backoff
+                print(f"⚠️ API call failed (attempt {attempt+1}/{max_retries}), retrying in {wait_time}s...")
+            else:
+                raise e
+            
+            if attempt < max_retries - 1:
+                time.sleep(wait_time)
+            else:
+                raise e
+    return ""
+
 def solve_pages(pages):
     results = []
-    for page in tqdm(pages, desc="Solving pages"):
+    
+    # Validate that we have pages with text
+    pages_with_text = [p for p in pages if str(p.get("text", "")).strip()]
+    if not pages_with_text:
+        print("⚠️ No text found in PDF pages. Nothing to solve.")
+        return results
+    
+    for page in tqdm(pages_with_text, desc="Solving pages"):
         text = str(page.get("text", "")).strip()
         if not text:
             continue
@@ -159,8 +229,7 @@ Answer: {sympy_solution}
 Return only 2-line explanation text.
 """
             try:
-                response = model.generate_content(prompt)
-                explanation = (response.text or "").strip()
+                explanation = call_llm_with_retry(prompt)
             except Exception as e:
                 explanation = f"Error generating explanation: {e}"
 
@@ -186,8 +255,8 @@ TEXT:
 {text}
 """
         try:
-            response = model.generate_content(prompt)
-            raw_output = extract_json_block(response.text)
+            response_text = call_llm_with_retry(prompt)
+            raw_output = extract_json_block(response_text)
             parsed = None
             try:
                 parsed = json.loads(raw_output)
@@ -228,6 +297,10 @@ LANGUAGES = {
 }
 
 def translate_items(items, target_lang):
+    if not items:
+        print("⚠️ No items to translate.")
+        return []
+    
     lang_lower = target_lang.lower()
     translated = []
     for item in tqdm(items, desc=f"Translating → {target_lang}"):
@@ -251,12 +324,12 @@ Answer: {a}
 Explanation: {e}
 """
         try:
-            response = model.generate_content(prompt)
-            parsed = extract_inner_json(response.text.strip())
+            response_text = call_llm_with_retry(prompt)
+            parsed = extract_inner_json(response_text)
             if parsed:
                 merged = {**item, **parsed}
             else:
-                merged = {**item, f"raw_translation_{lang_lower}": response.text.strip()}
+                merged = {**item, f"raw_translation_{lang_lower}": response_text}
             translated.append(merged)
         except Exception as err:
             item[f"translation_error_{lang_lower}"] = str(err)
@@ -275,6 +348,9 @@ Explanation: {e}
 BASE_DIR = PathLib(__file__).parent.resolve()
 FONTS_DIR = BASE_DIR / "fonts"
 
+# Create fonts directory if it doesn't exist
+FONTS_DIR.mkdir(exist_ok=True)
+
 # Font file mapping with correct filenames
 FONTS = {
     "telugu": str(FONTS_DIR / "NotoSansTelugu-Regular.ttf"),
@@ -283,6 +359,19 @@ FONTS = {
     "tamil":  str(FONTS_DIR / "NotoSansTamil-Regular.ttf"),
     "kannada": str(FONTS_DIR / "NotoSansKannada-Regular.ttf"),
 }
+
+def check_fonts():
+    """Check if font files exist and warn if missing"""
+    missing_fonts = []
+    for lang, font_path in FONTS.items():
+        if not os.path.exists(font_path):
+            missing_fonts.append(f"  - {lang}: {font_path}")
+    
+    if missing_fonts:
+        print("⚠️ Some font files are missing:")
+        print("\n".join(missing_fonts))
+        print("Note: PDF will use fallback fonts (Arial/Helvetica) which may not render all characters correctly.")
+        print(f"Place font files in: {FONTS_DIR}\n")
 
 def detect_language_sample(data):
     if not data:
@@ -567,38 +656,101 @@ def render_pdf_reportlab_fallback(data, lang, output_pdf):
 # Main CLI flow
 # -------------------------
 def main():
-    print("\n--- Unified pipeline (NO OCR) ---\n")
+    print("\n" + "="*60)
+    print("   Unified PDF Question Solver & Translator (NO OCR)")
+    print("="*60 + "\n")
+    
+    # Check fonts at startup
+    check_fonts()
+    
+    # Get and validate input PDF path
     input_pdf = input("Enter path to input PDF (or drag & drop): ").strip()
-    if not input_pdf or not os.path.exists(input_pdf):
-        print("❌ Invalid PDF path. Exiting.")
+    # Remove quotes that might be added from drag-and-drop on Windows
+    input_pdf = input_pdf.strip('"').strip("'")
+    
+    if not input_pdf:
+        print("❌ No file path provided. Exiting.")
         return
+    
+    if not os.path.exists(input_pdf):
+        print(f"❌ File not found: {input_pdf}")
+        print("   Please check the path and try again.")
+        return
+    
+    if not input_pdf.lower().endswith('.pdf'):
+        print(f"⚠️ Warning: File doesn't have .pdf extension: {input_pdf}")
+        proceed = input("Continue anyway? (y/n): ").strip().lower()
+        if proceed != 'y':
+            return
 
     print("\nChoose translation language:")
     for k, v in LANGUAGES.items():
-        print(f"{k}. {v}")
+        print(f"  {k}. {v}")
     choice = input("Enter language number (default 1 - Telugu): ").strip() or "1"
     target_lang = LANGUAGES.get(choice, "Telugu")
     lang_lower = target_lang.lower()
+    
+    print(f"\n✅ Selected language: {target_lang}")
+    print(f"✅ Input PDF: {input_pdf}\n")
 
-    # 1) Extract
-    print("\n🔍 Extracting PDF (text + images) ...")
-    pages = extract_pdf(input_pdf, output_json="extracted_data.json", output_image_folder="extracted_images")
+    try:
+        # 1) Extract
+        print("="*60)
+        print("STEP 1/4: Extracting PDF (text + images)")
+        print("="*60)
+        pages = extract_pdf(input_pdf, output_json="extracted_data.json", output_image_folder="extracted_images")
+        
+        if not pages:
+            print("❌ No pages extracted from PDF. Exiting.")
+            return
 
-    # 2) Solve
-    print("\n🧠 Solving extracted content ...")
-    solved = solve_pages(pages)
+        # 2) Solve
+        print("\n" + "="*60)
+        print("STEP 2/4: Solving extracted content")
+        print("="*60)
+        solved = solve_pages(pages)
+        
+        if not solved:
+            print("⚠️ No questions were solved. Please check if the PDF contains solvable questions.")
+            return
 
-    # 3) Translate
-    print(f"\n🌐 Translating solved content → {target_lang} ...")
-    translated = translate_items(solved, target_lang)
+        # 3) Translate
+        print("\n" + "="*60)
+        print(f"STEP 3/4: Translating to {target_lang}")
+        print("="*60)
+        translated = translate_items(solved, target_lang)
+        
+        if not translated:
+            print("⚠️ Translation failed. Using original solved data.")
+            translated = solved
 
-    # 4) Render PDF
-    print("\n📄 Rendering final PDF ...")
-    output_pdf_name = f"final_output_{lang_lower}.pdf"
-    asyncio.run(render_pdf_from_data(translated, lang_lower, output_pdf_name))
+        # 4) Render PDF
+        print("\n" + "="*60)
+        print("STEP 4/4: Rendering final PDF")
+        print("="*60)
+        output_pdf_name = f"final_output_{lang_lower}.pdf"
+        asyncio.run(render_pdf_from_data(translated, lang_lower, output_pdf_name))
 
-    print("\n🎉 All done! Check the 'outputs' folder for intermediate JSON files and the final PDF.")
-    print("If you want images embedded in the PDF later, tell me and I will add that feature.\n")
+        print("\n" + "="*60)
+        print("🎉 SUCCESS! Pipeline completed.")
+        print("="*60)
+        print(f"📁 Final PDF: {output_pdf_name}")
+        print("📁 Intermediate files: outputs/ folder")
+        print("📁 Extracted images: extracted_images/ folder")
+        print("\nIf you want images embedded in the PDF, let me know!\n")
+        
+    except KeyboardInterrupt:
+        print("\n\n⚠️ Process interrupted by user. Exiting...")
+    except Exception as e:
+        print(f"\n❌ ERROR: {str(e)}")
+        print("\nTroubleshooting:")
+        print("  1. Check your GENAI_API_KEY in .env file")
+        print("  2. Ensure PDF is not corrupted")
+        print("  3. Check internet connection for API calls")
+        print("  4. Run: playwright install chromium")
+        import traceback
+        print("\nFull error details:")
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
