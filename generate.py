@@ -824,16 +824,35 @@ async def save_pdf_playwright(text, outpath, lang):
                 if q.get("options") and len(q["options"]) > 0:
                     options_html = '<div style="margin: 8px 0;"><strong>Options:</strong><br>'
                     print(f"DEBUG: Rendering options for Q{q['number']}: {q['options']}")
-                    for opt in q["options"]:
+                    option_letters = ['A', 'B', 'C', 'D']
+                    for idx, opt in enumerate(q["options"]):
                         opt_clean = str(opt).strip()
+                        opt_marker = None
+                        opt_text = opt_clean
+                        
+                        # Try to extract existing marker
                         opt_match = re.match(r'^([A-D])\)\s*(.*)', opt_clean, re.IGNORECASE)
                         if opt_match:
                             opt_marker = opt_match.group(1).upper() + ")"
-                            opt_text = opt_match.group(2)
-                            options_html += f'<div style="margin: 4px 0;"><span style="font-family: Arial, sans-serif; font-weight: bold;">{opt_marker}</span> {clean_text_html(opt_text)}</div>'
-                            print(f"DEBUG: Rendered option: {opt_marker} {opt_text[:30]}")
+                            opt_text = opt_match.group(2).strip()
                         else:
-                            options_html += f'<div style="margin: 4px 0;">{clean_text_html(opt_clean)}</div>'
+                            # Check for bare ")" prefix
+                            bare_match = re.match(r'^\)\s*(.*)', opt_clean)
+                            if bare_match:
+                                opt_marker = option_letters[min(idx, 3)] + ")"
+                                opt_text = bare_match.group(1).strip()
+                            else:
+                                # No marker found, assign based on index
+                                opt_marker = option_letters[min(idx, 3)] + ")"
+                                # Remove any leading punctuation that might be confused with marker
+                                opt_text = re.sub(r'^[\)\.:\-]\s*', '', opt_text).strip()
+                        
+                        # Ensure we have a marker
+                        if not opt_marker:
+                            opt_marker = option_letters[min(idx, 3)] + ")"
+                        
+                        options_html += f'<div style="margin: 4px 0;"><span style="font-family: Arial, sans-serif; font-weight: bold; color: #000;">{opt_marker}</span> <span>{clean_text_html(opt_text)}</span></div>'
+                        print(f"DEBUG: Rendered option: {opt_marker} {opt_text[:30]}")
                     options_html += '</div>'
                     q_html += options_html
                 else:
@@ -875,21 +894,26 @@ async def save_pdf_playwright(text, outpath, lang):
                         answer_match = re.search(r'[:=]\s*([A-D])', q["answer"], re.IGNORECASE)
                     if answer_match:
                         answer_val = answer_match.group(1).upper()
-                        q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">Answer: {answer_val}</span></div>'
+                        q_html += f'<div class="answer" style="margin-top: 8px;"><strong><span style="font-family: Arial, sans-serif; color: #000;">Answer: {answer_val}</span></strong></div>'
                     else:
-                        answer_text = q["answer"]
-                        if not answer_text.startswith('Answer:'):
-                            answer_text = 'Answer: ' + answer_text
-                        q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">{clean_text_html(answer_text)}</span></div>'
+                        answer_text = str(q["answer"]).strip()
+                        # Check if answer_text is just ":" or empty marker
+                        if answer_text in [":", "：", "उत्तर:", "उत्तर："] or len(answer_text) <= 2:
+                            q_html += f'<div class="answer" style="margin-top: 8px; color: #999;"><span style="font-family: Arial, sans-serif;">Answer: Not provided</span></div>'
+                        else:
+                            # Format answer text properly
+                            if not answer_text.startswith('Answer:') and not answer_text.startswith('Answer '):
+                                answer_text = 'Answer: ' + answer_text
+                            q_html += f'<div class="answer" style="margin-top: 8px;"><strong><span style="font-family: Arial, sans-serif; color: #000;">{clean_text_html(answer_text)}</span></strong></div>'
                 else:
                     content_text = q.get("content", "")
                     answer_in_content = re.search(r'(?:Answer|उत्तर|సమాధానం|ଉత్తర|பதில்|ಉತ್ತರ)\s*[:=]\s*(.+)', content_text, re.IGNORECASE)
                     if answer_in_content:
                         ans_val = normalize_answer_value(answer_in_content.group(1))
                         mapped = ans_val or answer_in_content.group(1)
-                        q_html += f'<div class="answer"><span style="font-family: Arial, sans-serif;">Answer: {mapped}</span></div>'
+                        q_html += f'<div class="answer" style="margin-top: 8px;"><strong><span style="font-family: Arial, sans-serif; color: #000;">Answer: {mapped}</span></strong></div>'
                     else:
-                        q_html += f'<div class="answer" style="color: #999;">Answer: Not provided</div>'
+                        q_html += f'<div class="answer" style="margin-top: 8px; color: #999;"><span style="font-family: Arial, sans-serif;">Answer: Not provided</span></div>'
                 q_html += '</div>'
                 content_parts.append(q_html)
             content_html = '\n'.join(content_parts)
