@@ -61,10 +61,59 @@ LANG_DISPLAY_TO_GENERATE_CODE = {
     "Odia": "odia",
 }
 
-# --- Import backend modules with error handling ---
+# --- Import backend modules with error handling and reload support ---
 translate_module = None
 solution_module = None
 generate_module = None
+
+# Track module reload capability
+_module_reload_support = False
+try:
+    import importlib
+    _module_reload_support = True
+except ImportError:
+    pass
+
+
+def reload_backend_modules():
+    """
+    Reload backend modules to pick up code changes.
+    Useful when developing and testing changes without restarting the Gradio app.
+    """
+    global translate_module, solution_module, generate_module
+    
+    if not _module_reload_support:
+        print("⚠️ Module reload not available (importlib not found)")
+        return False
+    
+    reloaded = []
+    
+    try:
+        if translate_module:
+            translate_module = importlib.reload(translate_module)
+            reloaded.append("translate")
+    except Exception as e:
+        print(f"⚠️ Failed to reload translate module: {e}")
+    
+    try:
+        if solution_module:
+            solution_module = importlib.reload(solution_module)
+            reloaded.append("solution")
+    except Exception as e:
+        print(f"⚠️ Failed to reload solution module: {e}")
+    
+    try:
+        if generate_module:
+            generate_module = importlib.reload(generate_module)
+            reloaded.append("generate")
+    except Exception as e:
+        print(f"⚠️ Failed to reload generate module: {e}")
+    
+    if reloaded:
+        print(f"✅ Reloaded modules: {', '.join(reloaded)}")
+        return True
+    return False
+
 
 print("\n" + "="*60)
 print("🚀 Loading Backend Modules...")
@@ -73,9 +122,16 @@ print("="*60)
 try:
     import translate as translate_module
     print("✅ Translation module (translate.py) loaded successfully")
+    # Verify key classes/functions exist
+    if hasattr(translate_module, "PDFProcessingPipeline"):
+        print("   ✓ PDFProcessingPipeline class found")
+    else:
+        print("   ⚠️ PDFProcessingPipeline class not found")
 except Exception as e:
     translate_module = None
     print(f"❌ Failed to import translate.py: {e}")
+    import traceback
+    traceback.print_exc()
 
 try:
     import solution as solution_module
@@ -196,23 +252,70 @@ def run_translate_pipeline(input_pdf_path: str, target_lang_code: str):
     Returns:
         tuple: (output_path, error_message)
     """
+    # Validate input file path
+    if not input_pdf_path:
+        return None, "❌ Error: No PDF file path provided."
+    
+    input_pdf_path = str(input_pdf_path).strip()
+    
+    # Check if file exists (with helpful error message)
+    if not os.path.exists(input_pdf_path):
+        cwd = os.getcwd()
+        return None, (
+            f"❌ PDF file not found: {os.path.basename(input_pdf_path)}\n\n"
+            f"Details:\n"
+            f"  - Provided path: {input_pdf_path}\n"
+            f"  - Current directory: {cwd}\n"
+            f"  - Full path would be: {os.path.abspath(input_pdf_path)}\n\n"
+            f"Please check:\n"
+            f"  - File exists at the specified location\n"
+            f"  - File path is correct (absolute or relative)\n"
+            f"  - File has not been moved or deleted"
+        )
+    
+    if not os.path.isfile(input_pdf_path):
+        return None, f"❌ Path exists but is not a file: {input_pdf_path}"
+    
+    if not input_pdf_path.lower().endswith('.pdf'):
+        return None, f"❌ File is not a PDF: {input_pdf_path}"
+    
+    # Try to reload module if possible (to pick up code changes)
+    if _module_reload_support and translate_module:
+        try:
+            reload_backend_modules()
+        except Exception as reload_error:
+            print(f"⚠️ Module reload failed (continuing with cached version): {reload_error}")
+    
     if not translate_module:
-        return None, "❌ Translation module not available. Please check translate.py import."
+        return None, (
+            "❌ Translation module not available.\n\n"
+            "Possible causes:\n"
+            "  - translate.py file is missing or has syntax errors\n"
+            "  - Module import failed during app startup\n"
+            "  - Check console output for import errors"
+        )
     
     if not hasattr(translate_module, "PDFProcessingPipeline"):
-        return None, "❌ PDFProcessingPipeline class not found in translate.py"
+        return None, (
+            "❌ PDFProcessingPipeline class not found in translate.py\n\n"
+            "Possible causes:\n"
+            "  - translate.py has been modified and class renamed/moved\n"
+            "  - Module caching issue - try restarting the Gradio app\n"
+            "  - Check translate.py file for PDFProcessingPipeline class definition"
+        )
     
     try:
         print(f"\n{'='*60}")
         print(f"🌐 Starting Translation Pipeline")
         print(f"📄 Input: {os.path.basename(input_pdf_path)}")
+        print(f"📁 Full path: {os.path.abspath(input_pdf_path)}")
         print(f"🗣️  Target Language: {LANG_CODE_TO_DISPLAY.get(target_lang_code, target_lang_code)}")
         print(f"{'='*60}\n")
         
         # Initialize pipeline
         pipeline = translate_module.PDFProcessingPipeline(working_dir="outputs")
         
-        # Run complete pipeline
+        # Run complete pipeline (path validation happens inside)
         result = pipeline.run_complete_pipeline(
             pdf_path=input_pdf_path,
             languages=[target_lang_code],
@@ -224,23 +327,55 @@ def run_translate_pipeline(input_pdf_path: str, target_lang_code: str):
         generated_pdfs = result.get("generated_pdfs", [])
         if generated_pdfs:
             output_path = str(generated_pdfs[0])
-            print(f"✅ Translation successful: {os.path.basename(output_path)}")
-            return output_path, None
+            if os.path.exists(output_path):
+                print(f"✅ Translation successful: {os.path.basename(output_path)}")
+                return output_path, None
+            else:
+                print(f"⚠️ PDF was generated but file not found at: {output_path}")
         
         # Check for translated JSON (fallback)
         translations = result.get("translations", [])
         if translations:
             output_path = str(translations[0])
-            print(f"⚠️ Translated JSON created: {os.path.basename(output_path)}")
-            return output_path, "Translation completed, but PDF generation may have failed. JSON file provided instead."
+            if os.path.exists(output_path):
+                print(f"⚠️ Translated JSON created: {os.path.basename(output_path)}")
+                return output_path, "Translation completed, but PDF generation may have failed. JSON file provided instead."
+            else:
+                print(f"⚠️ JSON was generated but file not found at: {output_path}")
         
         # No output produced
-        return None, "❌ Pipeline completed but no output files were generated."
+        return None, (
+            "❌ Pipeline completed but no output files were generated.\n\n"
+            "Possible causes:\n"
+            "  - Translation process failed silently\n"
+            "  - Output directory permissions issue\n"
+            "  - Check console output for detailed error messages"
+        )
         
+    except FileNotFoundError as e:
+        error_msg = str(e)
+        print(f"\n❌ File not found error:\n{error_msg}")
+        return None, f"❌ File not found: {error_msg}"
+    
+    except ValueError as e:
+        error_msg = str(e)
+        print(f"\n❌ Validation error:\n{error_msg}")
+        return None, f"❌ Validation error: {error_msg}"
+    
+    except PermissionError as e:
+        error_msg = str(e)
+        print(f"\n❌ Permission error:\n{error_msg}")
+        return None, f"❌ Permission denied: {error_msg}"
+    
     except Exception as e:
         error_details = traceback.format_exc()
+        error_msg = str(e)
         print(f"\n❌ Translation failed:\n{error_details}")
-        return None, f"Translation failed: {str(e)}"
+        return None, (
+            f"❌ Translation failed: {error_msg}\n\n"
+            f"Full error details have been logged to console.\n"
+            f"Check the terminal/console output for more information."
+        )
 
 
 def run_solution_pipeline(input_pdf_path: str, target_lang_code: str):
@@ -613,7 +748,8 @@ def build_ui():
             </div>
             <div class="subtitle">
             <p><b>Unified interface for Translation, Solution Generation, and MCQ Creation</b></p>
-            <p>Powered by Google Gemini 2.5 Pro | Supporting Hindi & Odia</p>
+            <p>Powered by Google Gemini 2.5 Flash/Pro | Supporting Hindi & Odia</p>
+            <p><small>Note: Translation module uses GoogleTranslator (not Gemini). Solution/MCQ modules use Gemini 2.5 Flash/Pro.</small></p>
             </div>
             """,
             elem_classes=["main-title", "subtitle"]
@@ -747,7 +883,7 @@ def build_ui():
                     **Features:**
                     - PDF-based MCQ generation
                     - Topic-based MCQ creation
-                    - AI-powered question crafting
+                    - AI-powered question crafting (Gemini 2.5 Pro)
                     - Formatted PDF output with answers
                     """
                 )

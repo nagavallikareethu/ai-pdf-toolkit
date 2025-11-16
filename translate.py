@@ -2370,11 +2370,27 @@ class PDFProcessingPipeline:
         image_handling: str = "metadata",
     ):
         """
-        Returns a dict with keys: extracted_json, translations (list), generated_pdfs (list).
+        Run the complete translation pipeline: extract PDF → translate JSON → rebuild PDF(s).
+        
+        Args:
+            pdf_path: Path to source PDF file (will be validated)
+            languages: Language code(s) to translate to (e.g., "hi", ["hi", "or"])
+            include_images: Whether to extract and include images
+            image_handling: How to store images ("metadata", "external", "base64")
+        
+        Returns:
+            dict with keys:
+                - extracted_json: Path to extracted JSON file
+                - translations: List of translated JSON file paths
+                - generated_pdfs: List of generated PDF file paths
+        
+        Raises:
+            FileNotFoundError: If PDF file doesn't exist
+            ValueError: If PDF path is invalid
+            PermissionError: If PDF file is not readable
         """
-        pdf_path = Path(pdf_path)
-        if not pdf_path.exists():
-            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+        # Validate PDF path with helpful error messages
+        pdf_path = validate_pdf_path(pdf_path)
 
         langs = self._normalize_languages(languages)
         if not langs:
@@ -3044,11 +3060,35 @@ def run_full_pipeline(pdf_path: str,
 
 def build_arg_parser():
     parser = argparse.ArgumentParser(
-        description="Unified PDF translation pipeline (extraction → translation → PDF rebuild)."
+        description="Unified PDF translation pipeline (extraction → translation → PDF rebuild).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic usage (required: --pdf argument)
+  python translate.py --pdf input.pdf --languages hi,or
+
+  # List supported languages
+  python translate.py --list-languages
+
+  # Skip image extraction for faster processing
+  python translate.py --pdf input.pdf --languages hi --no-images
+
+  # Use programmatically (no CLI arguments needed)
+  from translate import PDFProcessingPipeline
+  pipeline = PDFProcessingPipeline()
+  result = pipeline.run_complete_pipeline(pdf_path="input.pdf", languages=["hi"])
+
+Note: When used as a module (imported), the CLI arguments are not required.
+The PDFProcessingPipeline class can be used directly without command-line arguments.
+        """
     )
-    parser.add_argument("--pdf", required=True, help="Path to the source PDF file.")
-    parser.add_argument("--languages", default="te",
-                        help="Comma-separated ISO codes or language names (e.g., 'te,hi').")
+    parser.add_argument(
+        "--pdf",
+        required=False,  # Changed: Allow programmatic usage without CLI args
+        help="Path to the source PDF file. REQUIRED when running from command line."
+    )
+    parser.add_argument("--languages", default="hi",
+                        help="Comma-separated ISO codes or language names (e.g., 'hi,or'). Default: hi")
     parser.add_argument("--no-images", action="store_true",
                         help="Skip image extraction to speed up processing.")
     parser.add_argument("--image-handling", choices=["metadata", "external", "base64"],
@@ -3066,30 +3106,140 @@ def build_arg_parser():
     return parser
 
 
+def validate_pdf_path(pdf_path: str | Path) -> Path:
+    """
+    Validate PDF file path and provide helpful error messages.
+    
+    Args:
+        pdf_path: Path to PDF file (string or Path object)
+    
+    Returns:
+        Path object if valid
+    
+    Raises:
+        FileNotFoundError: If file doesn't exist
+        ValueError: If path is invalid or file is not a PDF
+    """
+    if not pdf_path:
+        raise ValueError("PDF path is required but was not provided.")
+    
+    pdf_path = Path(pdf_path)
+    
+    # Check if path exists
+    if not pdf_path.exists():
+        # Provide helpful suggestions
+        suggestions = []
+        if pdf_path.is_absolute():
+            suggestions.append(f"  - Absolute path provided: {pdf_path}")
+            suggestions.append(f"  - Verify the file exists at this location")
+        else:
+            cwd = Path.cwd()
+            suggestions.append(f"  - Relative path provided: {pdf_path}")
+            suggestions.append(f"  - Current working directory: {cwd}")
+            suggestions.append(f"  - Full resolved path would be: {cwd / pdf_path}")
+            suggestions.append(f"  - Check if file is in a different directory")
+        
+        error_msg = f"\n❌ PDF file not found: {pdf_path}\n" + "\n".join(suggestions)
+        raise FileNotFoundError(error_msg)
+    
+    # Check if it's a file (not directory)
+    if not pdf_path.is_file():
+        raise ValueError(f"Path exists but is not a file: {pdf_path}")
+    
+    # Check if it's a PDF (by extension)
+    if pdf_path.suffix.lower() != ".pdf":
+        raise ValueError(
+            f"File does not have .pdf extension: {pdf_path}\n"
+            f"  - Provided extension: {pdf_path.suffix}\n"
+            f"  - If this is indeed a PDF file, try renaming it with .pdf extension"
+        )
+    
+    # Check if file is readable
+    if not os.access(pdf_path, os.R_OK):
+        raise PermissionError(f"PDF file exists but is not readable: {pdf_path}")
+    
+    # Check file size (basic sanity check)
+    file_size = pdf_path.stat().st_size
+    if file_size == 0:
+        raise ValueError(f"PDF file is empty (0 bytes): {pdf_path}")
+    
+    if file_size < 100:  # Very small files are likely not valid PDFs
+        print(f"⚠️ Warning: PDF file is very small ({file_size} bytes). It may be corrupted or invalid.")
+    
+    return pdf_path
+
+
 def main():
+    """
+    Main CLI entry point. Handles command-line arguments and runs the pipeline.
+    When called programmatically (not via CLI), use PDFProcessingPipeline directly.
+    """
+    import sys
+    
     parser = build_arg_parser()
     args = parser.parse_args()
     
+    # Handle --list-languages flag
     if args.list_languages:
         list_supported_languages()
         return
     
+    # Validate --pdf argument (required for CLI usage)
+    if not args.pdf:
+        parser.print_help()
+        print("\n" + "="*70)
+        print("❌ ERROR: --pdf argument is required when running from command line.")
+        print("="*70)
+        print("\nUsage examples:")
+        print("  python translate.py --pdf input.pdf --languages hi")
+        print("  python translate.py --list-languages")
+        print("\nFor programmatic usage (without CLI):")
+        print("  from translate import PDFProcessingPipeline")
+        print("  pipeline = PDFProcessingPipeline()")
+        print("  result = pipeline.run_complete_pipeline(pdf_path='input.pdf', languages=['hi'])")
+        print("="*70 + "\n")
+        sys.exit(1)
+    
+    # Validate PDF path with helpful error messages
+    try:
+        validated_pdf_path = validate_pdf_path(args.pdf)
+    except (FileNotFoundError, ValueError, PermissionError) as e:
+        print(f"\n{'='*70}")
+        print("❌ PDF PATH VALIDATION FAILED")
+        print("="*70)
+        print(str(e))
+        print("="*70 + "\n")
+        sys.exit(1)
+    
+    # Normalize languages
     try:
         languages = normalize_language_choices(args.languages)
     except ValueError as exc:
         parser.error(str(exc))
         return
     
-    run_full_pipeline(
-        pdf_path=args.pdf,
-        languages=languages,
-        include_images=not args.no_images,
-        image_handling=args.image_handling,
-        extracted_json_path=args.extracted_json,
-        translated_dir=args.translated_dir,
-        output_dir=args.output_dir,
-        overlay=not args.no_overlay
-    )
+    # Run pipeline
+    try:
+        run_full_pipeline(
+            pdf_path=str(validated_pdf_path),
+            languages=languages,
+            include_images=not args.no_images,
+            image_handling=args.image_handling,
+            extracted_json_path=args.extracted_json,
+            translated_dir=args.translated_dir,
+            output_dir=args.output_dir,
+            overlay=not args.no_overlay
+        )
+    except Exception as e:
+        import traceback
+        print(f"\n{'='*70}")
+        print("❌ PIPELINE EXECUTION FAILED")
+        print("="*70)
+        print(f"Error: {str(e)}")
+        print("\nFull traceback:")
+        print(traceback.format_exc())
+        print("="*70 + "\n")
+        sys.exit(1)
 def json_to_pdf(input_json_path, output_pdf_path):
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
