@@ -271,12 +271,17 @@ Explanation: {e}
 # -------------------------
 # JSON -> PDF (Playwright rendering)
 # -------------------------
+# Set up font directory
+BASE_DIR = PathLib(__file__).parent.resolve()
+FONTS_DIR = BASE_DIR / "fonts"
+
+# Font file mapping with correct filenames
 FONTS = {
-    "telugu": "NotoSansTelugu-VariableFont_wdth,wght.ttf",
-    "hindi":  "NotoSansDevanagari[wdth,wght].ttf",
-    "odia":   "NotoSansOriya[wdth,wght].ttf",
-    "tamil":  "NotoSansTamil-VariableFont.ttf",
-    "kannada":"NotoSansKannada-VariableFont.ttf",
+    "telugu": str(FONTS_DIR / "NotoSansTelugu-Regular.ttf"),
+    "hindi":  str(FONTS_DIR / "TiroDevanagariHindi-Regular.ttf"),
+    "odia":   str(FONTS_DIR / "NotoSansOriya-Regular.ttf"),
+    "tamil":  str(FONTS_DIR / "NotoSansTamil-Regular.ttf"),
+    "kannada": str(FONTS_DIR / "NotoSansKannada-Regular.ttf"),
 }
 
 def detect_language_sample(data):
@@ -297,21 +302,30 @@ def detect_language_sample(data):
         return "telugu"
 
 def build_html(pages, lang):
+    # Get font file path
     font_file = FONTS.get(lang, None)
+    
+    # Check if font exists (with fallback to hindi if not found)
+    if not font_file or not os.path.exists(font_file):
+        # Try Hindi font as fallback
+        font_file = FONTS.get("hindi", None)
+    
     if font_file and os.path.exists(font_file):
         font_path = pathlib.Path(font_file).resolve().as_uri()
         font_face = f"""
         @font-face {{
             font-family: 'LangFont';
             src: url('{font_path}') format('truetype');
-            font-weight: 100 900;
+            font-weight: normal;
             font-style: normal;
         }}
         """
-        body_font = "LangFont, sans-serif"
+        body_font = "Arial, LangFont, sans-serif"
+        print(f"✅ Using font: {font_file}")
     else:
         font_face = ""
-        body_font = "sans-serif"
+        body_font = "Arial, sans-serif"
+        print(f"⚠️ Font file not found for {lang}, using Arial fallback")
 
     lang_labels = {
         "telugu": ("సమాధానం", "వివరణ", "తెలుగులో అనువదించిన ప్రశ్నపత్రం"),
@@ -448,14 +462,13 @@ async def render_pdf_from_data(data, lang, output_pdf):
 
 def render_pdf_reportlab_fallback(data, lang, output_pdf):
     """Fallback PDF rendering using ReportLab (limited Indic font support)"""
-    # Font mapping for ReportLab
-    BASE_DIR = PathLib(__file__).parent.resolve()
-    FONTS_DIR = BASE_DIR / "fonts"
-    
+    # Font mapping for ReportLab (use same FONTS_DIR as defined above)
     font_map = {
-        "hindi": ("NotoSansDevanagari", str(FONTS_DIR / "NotoSansDevanagari-Regular.ttf")),
+        "hindi": ("TiroDevanagariHindi", str(FONTS_DIR / "TiroDevanagariHindi-Regular.ttf")),
         "odia": ("NotoSansOriya", str(FONTS_DIR / "NotoSansOriya-Regular.ttf")),
         "telugu": ("NotoSansTelugu", str(FONTS_DIR / "NotoSansTelugu-Regular.ttf")),
+        "tamil": ("NotoSansTamil", str(FONTS_DIR / "NotoSansTamil-Regular.ttf")),
+        "kannada": ("NotoSansKannada", str(FONTS_DIR / "NotoSansKannada-Regular.ttf")),
     }
     
     font_name, font_file = font_map.get(lang.lower(), ("Helvetica", None))
