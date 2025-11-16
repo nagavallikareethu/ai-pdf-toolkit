@@ -497,16 +497,22 @@ def build_html(pages, lang):
     return "\n".join(parts)
 
 async def render_pdf_from_data(data, lang, output_pdf):
+    print(f"📊 Rendering {len(data)} items to PDF...")
     html_doc = build_html(data, lang)
+    print(f"📝 HTML generated: {len(html_doc)} characters")
+    
     tmpdir = tempfile.mkdtemp()
     html_path = os.path.join(tmpdir, "doc.html")
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html_doc)
+    print(f"✅ HTML saved to temp file: {html_path}")
 
     try:
+        print("🌐 Starting Playwright PDF rendering...")
         async with async_playwright() as p:
             try:
                 browser = await p.chromium.launch()
+                print("✅ Chromium browser launched")
             except Exception as launch_error:
                 error_msg = str(launch_error)
                 if "Executable doesn't exist" in error_msg or "playwright install" in error_msg.lower():
@@ -549,10 +555,32 @@ async def render_pdf_from_data(data, lang, output_pdf):
                     raise
             
             page = await browser.new_page()
-            await page.goto(pathlib.Path(html_path).resolve().as_uri())
+            print("✅ New page created")
+            
+            html_uri = pathlib.Path(html_path).resolve().as_uri()
+            print(f"📄 Loading HTML from: {html_uri}")
+            await page.goto(html_uri)
+            print("✅ HTML loaded in browser")
+            
+            # Wait for fonts to load
+            await page.wait_for_timeout(1000)
+            print("✅ Waited for fonts to load")
+            
             await page.pdf(path=output_pdf, format="A4", margin={"top":"1cm","right":"1cm","bottom":"1cm","left":"1cm"}, print_background=True)
+            print(f"✅ PDF generated")
+            
             await browser.close()
-            print(f"✅ PDF rendered → {output_pdf}")
+            print(f"✅ Browser closed")
+            
+            # Verify PDF was created
+            if os.path.exists(output_pdf):
+                pdf_size = os.path.getsize(output_pdf)
+                print(f"✅ PDF rendered → {output_pdf} ({pdf_size} bytes)")
+                
+                if pdf_size < 50000:
+                    print(f"⚠️ Warning: PDF is quite small ({pdf_size} bytes) - might be incomplete")
+            else:
+                print(f"❌ Warning: PDF file not found at {output_pdf}")
             
     except Exception as e:
         error_msg = str(e)

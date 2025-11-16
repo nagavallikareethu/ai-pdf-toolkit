@@ -39,10 +39,12 @@ temp/
 !QUICK_REFERENCE.md
 !FIXES_APPLIED.md
 !API_DIAGNOSIS_REPORT.md
+!FIX_EMPTY_PDF.md
 !requirements.txt
 
-# Test files
+# Test files (for local testing only)
 test_*.py
+test_*.html
 
 # OS
 .DS_Store
