@@ -3173,73 +3173,141 @@ def main():
     """
     Main CLI entry point. Handles command-line arguments and runs the pipeline.
     When called programmatically (not via CLI), use PDFProcessingPipeline directly.
+    Supports both argument-based and default mode execution.
     """
     import sys
     
-    parser = build_arg_parser()
-    args = parser.parse_args()
-    
-    # Handle --list-languages flag
-    if args.list_languages:
+    # Handle --list-languages flag first (can be used with or without other args)
+    if '--list-languages' in sys.argv:
         list_supported_languages()
         return
     
-    # Validate --pdf argument (required for CLI usage)
-    if not args.pdf:
-        parser.print_help()
-        print("\n" + "="*70)
-        print("❌ ERROR: --pdf argument is required when running from command line.")
-        print("="*70)
-        print("\nUsage examples:")
-        print("  python translate.py --pdf input.pdf --languages hi")
-        print("  python translate.py --list-languages")
-        print("\nFor programmatic usage (without CLI):")
-        print("  from translate import PDFProcessingPipeline")
-        print("  pipeline = PDFProcessingPipeline()")
-        print("  result = pipeline.run_complete_pipeline(pdf_path='input.pdf', languages=['hi'])")
-        print("="*70 + "\n")
-        sys.exit(1)
-    
-    # Validate PDF path with helpful error messages
-    try:
-        validated_pdf_path = validate_pdf_path(args.pdf)
-    except (FileNotFoundError, ValueError, PermissionError) as e:
-        print(f"\n{'='*70}")
-        print("❌ PDF PATH VALIDATION FAILED")
-        print("="*70)
-        print(str(e))
-        print("="*70 + "\n")
-        sys.exit(1)
-    
-    # Normalize languages
-    try:
-        languages = normalize_language_choices(args.languages)
-    except ValueError as exc:
-        parser.error(str(exc))
-        return
-    
-    # Run pipeline
-    try:
-        run_full_pipeline(
-            pdf_path=str(validated_pdf_path),
-            languages=languages,
-            include_images=not args.no_images,
-            image_handling=args.image_handling,
-            extracted_json_path=args.extracted_json,
-            translated_dir=args.translated_dir,
-            output_dir=args.output_dir,
-            overlay=not args.no_overlay
-        )
-    except Exception as e:
-        import traceback
-        print(f"\n{'='*70}")
-        print("❌ PIPELINE EXECUTION FAILED")
-        print("="*70)
-        print(f"Error: {str(e)}")
-        print("\nFull traceback:")
-        print(traceback.format_exc())
-        print("="*70 + "\n")
-        sys.exit(1)
+    # Check if command line arguments are provided (excluding help flag)
+    if len(sys.argv) > 1 and not any(arg in sys.argv for arg in ['--help', '-h']):
+        # Use argparse if arguments are provided
+        parser = build_arg_parser()
+        args = parser.parse_args()
+        
+        # Double-check list-languages (shouldn't reach here, but just in case)
+        if args.list_languages:
+            list_supported_languages()
+            return
+        
+        # Validate --pdf argument (required when arguments are provided)
+        if not args.pdf:
+            parser.print_help()
+            print("\n" + "="*70)
+            print("❌ ERROR: --pdf argument is required when providing command-line arguments.")
+            print("="*70)
+            print("\nUsage examples:")
+            print("  python translate.py --pdf input.pdf --languages hi")
+            print("  python translate.py --list-languages")
+            print("\nOr run without arguments to use default settings:")
+            print("  python translate.py")
+            print("="*70 + "\n")
+            sys.exit(1)
+        
+        # Validate PDF path with helpful error messages
+        try:
+            validated_pdf_path = validate_pdf_path(args.pdf)
+        except (FileNotFoundError, ValueError, PermissionError) as e:
+            print(f"\n{'='*70}")
+            print("❌ PDF PATH VALIDATION FAILED")
+            print("="*70)
+            print(str(e))
+            print("="*70 + "\n")
+            sys.exit(1)
+        
+        # Normalize languages
+        try:
+            languages = normalize_language_choices(args.languages)
+        except ValueError as exc:
+            parser.error(str(exc))
+            return
+        
+        # Run pipeline with provided arguments
+        try:
+            run_full_pipeline(
+                pdf_path=str(validated_pdf_path),
+                languages=languages,
+                include_images=not args.no_images,
+                image_handling=args.image_handling,
+                extracted_json_path=args.extracted_json,
+                translated_dir=args.translated_dir,
+                output_dir=args.output_dir,
+                overlay=not args.no_overlay
+            )
+        except Exception as e:
+            import traceback
+            print(f"\n{'='*70}")
+            print("❌ PIPELINE EXECUTION FAILED")
+            print("="*70)
+            print(f"Error: {str(e)}")
+            print("\nFull traceback:")
+            print(traceback.format_exc())
+            print("="*70 + "\n")
+            sys.exit(1)
+    else:
+        # Default behavior when no arguments are provided
+        default_pdf = "SBI Clerk Prelims.pdf"
+        default_languages = ["hi"]  # Hindi as default
+        
+        print("\n" + "🚀 Running PDF Translation Pipeline with Default Settings")
+        print("=" * 70)
+        print(f"📄 PDF File: {default_pdf}")
+        print(f"🌐 Language: {LANG_CODE_TO_NAME.get('hi', 'Hindi')}")
+        print("=" * 70 + "\n")
+        
+        # Check if default PDF exists
+        if not os.path.exists(default_pdf):
+            print(f"❌ Error: Default PDF file '{default_pdf}' not found!")
+            print(f"\nCurrent directory: {os.getcwd()}")
+            print("\nPlease either:")
+            print(f"1. Place '{default_pdf}' in the current directory")
+            print("2. Run with command line arguments:")
+            print('   python translate.py --pdf "your_file.pdf" --languages hi')
+            print("\nFor programmatic usage (without CLI):")
+            print("  from translate import PDFProcessingPipeline")
+            print("  pipeline = PDFProcessingPipeline()")
+            print("  result = pipeline.run_complete_pipeline(pdf_path='input.pdf', languages=['hi'])")
+            sys.exit(1)
+        
+        # Validate default PDF path
+        try:
+            validated_pdf_path = validate_pdf_path(default_pdf)
+        except (FileNotFoundError, ValueError, PermissionError) as e:
+            print(f"\n{'='*70}")
+            print("❌ PDF PATH VALIDATION FAILED")
+            print("="*70)
+            print(str(e))
+            print("="*70 + "\n")
+            sys.exit(1)
+        
+        # Run pipeline with default settings
+        try:
+            run_full_pipeline(
+                pdf_path=str(validated_pdf_path),
+                languages=default_languages,
+                include_images=True,
+                image_handling="metadata",
+                extracted_json_path=None,
+                translated_dir="translated_jsons",
+                output_dir="outputs",
+                overlay=True
+            )
+            print("\n✅ Pipeline completed successfully with default settings!")
+        except Exception as e:
+            import traceback
+            print(f"\n{'='*70}")
+            print("❌ PIPELINE EXECUTION FAILED")
+            print("="*70)
+            print(f"Error: {str(e)}")
+            print("\n💡 Try running with explicit arguments:")
+            print('   python translate.py --pdf "your_file.pdf" --languages hi')
+            print("\nFull traceback:")
+            print(traceback.format_exc())
+            print("="*70 + "\n")
+            sys.exit(1)
 def json_to_pdf(input_json_path, output_pdf_path):
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
