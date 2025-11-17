@@ -2406,6 +2406,11 @@ class PDFProcessingPipeline:
             include_images=include_images,
             image_handling=image_handling,
         )
+        
+        # Apply content type processing (same as CLI)
+        change_mathematical_to_normal_text(str(extracted_json), str(extracted_json))
+        update_content_types_to_mathematical(str(extracted_json), str(extracted_json))
+        verify_json_structure(str(extracted_json))
 
         results = {
             "extracted_json": extracted_json,
