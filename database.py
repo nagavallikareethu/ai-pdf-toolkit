@@ -8,8 +8,7 @@ Uses SQLAlchemy ORM with PostgreSQL.
 """
 
 from sqlalchemy import create_engine, text, event
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session, declarative_base
 from sqlalchemy.pool import Pool
 from contextlib import contextmanager
 import os
@@ -321,6 +320,15 @@ if __name__ == "__main__":
     """
     Test database connection when run directly
     """
+    # Fix Windows console encoding
+    import sys
+    if sys.platform == 'win32':
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+            sys.stderr.reconfigure(encoding='utf-8')
+        except:
+            pass
+    
     print("\n" + "="*70)
     print("DATABASE CONNECTION TEST")
     print("="*70)
