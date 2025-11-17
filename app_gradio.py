@@ -847,8 +847,6 @@ def build_ui():
             </div>
             <div class="subtitle">
             <p><b>Unified interface for Translation, Solution Generation, and MCQ Creation</b></p>
-            <p>Powered by Google Gemini 2.5 Flash/Pro | Supporting Hindi & Odia</p>
-            <p><small>Note: Translation module uses GoogleTranslator (not Gemini). Solution/MCQ modules use Gemini 2.5 Flash/Pro.</small></p>
             </div>
             """,
             elem_classes=["main-title", "subtitle"]
