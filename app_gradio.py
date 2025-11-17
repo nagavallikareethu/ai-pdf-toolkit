@@ -1044,29 +1044,6 @@ def build_ui():
                     outputs=[mcq_status, mcq_preview, mcq_download]
                 )
         
-        # Footer
-        gr.Markdown(
-            """
-            ---
-            ### ℹ️ Important Notes
-            
-            - **API Keys:** Ensure `GENAI_API_KEY` or `GEMINI_API_KEY` is set in your environment or `.env` file
-            - **Processing Time:** Large PDFs or complex operations may take several minutes
-            - **Output Location:** All generated files are saved in the `outputs/` directory
-            - **Supported Languages:** Currently supporting Hindi (हिंदी) and Odia (ଓଡ଼ିଆ)
-            - **Module Status:** 
-              - Translation: {0}
-              - Solution: {1}
-              - MCQ Generation: {2}
-            
-            💡 **Tip:** You can use the MCQ generation module without uploading a PDF by just entering a topic!
-            """.format(
-                "✅ Available" if translate_module else "❌ Not Available",
-                "✅ Available" if solution_module else "❌ Not Available",
-                "✅ Available" if generate_module else "❌ Not Available"
-            )
-        )
-        
         # Version info
         gr.Markdown(
             """
