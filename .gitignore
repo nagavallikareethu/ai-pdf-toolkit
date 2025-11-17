@@ -34,28 +34,16 @@ temp/
 
 # Documentation (keep important docs)
 *.md
-!README.md
-!VERIFICATION_REPORT.md
-!QUICK_REFERENCE.md
-!FIXES_APPLIED.md
-!API_DIAGNOSIS_REPORT.md
-!FIX_EMPTY_PDF.md
-!GRADIO_CLI_SYNC_GUIDE.md
-!GRADIO_FIXES_APPLIED.md
-!IMPLEMENTATION_COMPLETE.md
-!QUICK_START_TESTING.md
-!FIX_CLI_GRADIO_MISMATCH.md
-!CLEANUP_COMPLETE.md
+!readme.md
 !SYSTEM_ARCHITECTURE.md
 !PROJECT_WORKFLOW.md
+!TRANSLATION_SYSTEM_PROMPTS.md
 !requirements.txt
 
 # Test files (for local testing only)
 test_*.py
-!test_cli_vs_gradio_outputs.py
 test_*.html
 diagnose_*.py
-!diagnose_gradio_cli_diff.py
 
 # OS
 .DS_Store
