@@ -37,7 +37,6 @@ temp/
 !readme.md
 !SYSTEM_ARCHITECTURE.md
 !PROJECT_WORKFLOW.md
-!GRADIO_DATABASE_INTEGRATION_GUIDE.md
 !requirements.txt
 
 # Test files (for local testing only)
