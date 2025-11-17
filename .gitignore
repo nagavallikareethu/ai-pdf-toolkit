@@ -45,6 +45,9 @@ temp/
 !IMPLEMENTATION_COMPLETE.md
 !QUICK_START_TESTING.md
 !FIX_CLI_GRADIO_MISMATCH.md
+!CLEANUP_COMPLETE.md
+!SYSTEM_ARCHITECTURE.md
+!PROJECT_WORKFLOW.md
 !requirements.txt
 
 # Test files (for local testing only)
