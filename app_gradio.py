@@ -75,10 +75,50 @@ except ImportError:
     pass
 
 
+def force_reload_translate_module():
+    """
+    Aggressively reload translate module, clearing all caches.
+    This ensures we always use the latest code, matching CLI behavior.
+    """
+    global translate_module
+    
+    try:
+        # Step 1: Remove from sys.modules (clear cached import)
+        if 'translate' in sys.modules:
+            del sys.modules['translate']
+            print("🔄 Cleared translate from sys.modules")
+        
+        # Step 2: Remove any translate submodules
+        submodules = [key for key in sys.modules.keys() if key.startswith('translate.')]
+        for key in submodules:
+            del sys.modules[key]
+        
+        # Step 3: Invalidate import caches
+        importlib.invalidate_caches()
+        
+        # Step 4: Fresh import
+        import translate as fresh_module
+        translate_module = fresh_module
+        
+        # Step 5: Verify and log
+        if hasattr(translate_module, '__file__'):
+            mod_time = datetime.fromtimestamp(os.path.getmtime(translate_module.__file__))
+            print(f"✅ Reloaded translate.py (modified: {mod_time.strftime('%Y-%m-%d %H:%M:%S')})")
+            print(f"   Path: {translate_module.__file__}")
+        
+        return translate_module
+        
+    except Exception as e:
+        print(f"❌ CRITICAL: Failed to reload translate module: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def reload_backend_modules():
     """
     Reload backend modules to pick up code changes.
-    Useful when developing and testing changes without restarting the Gradio app.
+    Enhanced to use aggressive reload for translate module.
     """
     global translate_module, solution_module, generate_module
     
@@ -88,13 +128,15 @@ def reload_backend_modules():
     
     reloaded = []
     
+    # Use aggressive reload for translate
     try:
+        translate_module = force_reload_translate_module()
         if translate_module:
-            translate_module = importlib.reload(translate_module)
             reloaded.append("translate")
     except Exception as e:
         print(f"⚠️ Failed to reload translate module: {e}")
     
+    # Standard reload for solution
     try:
         if solution_module:
             solution_module = importlib.reload(solution_module)
@@ -102,6 +144,7 @@ def reload_backend_modules():
     except Exception as e:
         print(f"⚠️ Failed to reload solution module: {e}")
     
+    # Standard reload for generate
     try:
         if generate_module:
             generate_module = importlib.reload(generate_module)
@@ -236,6 +279,36 @@ def get_file_details(path):
 
 # --- Backend Pipeline Wrappers ---
 
+def verify_environment():
+    """
+    Verify environment variables match CLI execution context.
+    Returns True if environment is properly configured.
+    """
+    from dotenv import load_dotenv
+    
+    # Force reload .env from script directory
+    env_path = Path(__file__).parent / '.env'
+    if env_path.exists():
+        load_dotenv(env_path, override=True)
+    
+    # Check critical variables
+    api_key = os.getenv('GENAI_API_KEY') or os.getenv('GEMINI_API_KEY')
+    model = os.getenv('GENAI_MODEL', 'models/gemini-2.5-flash')
+    
+    print(f"\n🔐 Environment Verification:")
+    if api_key:
+        masked = f"{api_key[:10]}...{api_key[-6:]}"
+        print(f"   API Key: {masked} ✅")
+    else:
+        print(f"   API Key: ❌ NOT FOUND")
+        return False
+    
+    print(f"   Model: {model}")
+    print(f"   .env loaded from: {env_path}")
+    
+    return True
+
+
 def run_translate_pipeline(input_pdf_path: str, target_lang_code: str):
     """
     Execute the translation pipeline from translate.py
@@ -252,6 +325,10 @@ def run_translate_pipeline(input_pdf_path: str, target_lang_code: str):
     Returns:
         tuple: (output_path, error_message)
     """
+    # Verify environment matches CLI
+    if not verify_environment():
+        return None, "❌ Environment verification failed. Check API key configuration."
+    
     # Validate input file path
     if not input_pdf_path:
         return None, "❌ Error: No PDF file path provided."
@@ -279,14 +356,22 @@ def run_translate_pipeline(input_pdf_path: str, target_lang_code: str):
     if not input_pdf_path.lower().endswith('.pdf'):
         return None, f"❌ File is not a PDF: {input_pdf_path}"
     
-    # Try to reload module if possible (to pick up code changes)
-    if _module_reload_support and translate_module:
-        try:
-            reload_backend_modules()
-        except Exception as reload_error:
-            print(f"⚠️ Module reload failed (continuing with cached version): {reload_error}")
+    # Calculate input file hash for verification
+    import hashlib
+    with open(input_pdf_path, 'rb') as f:
+        input_hash = hashlib.md5(f.read()).hexdigest()
+    file_size = os.path.getsize(input_pdf_path)
     
-    if not translate_module:
+    print(f"\n📊 Input File Verification:")
+    print(f"   Size: {file_size:,} bytes")
+    print(f"   MD5: {input_hash}")
+    print(f"   (Use this hash to compare with CLI input)")
+    
+    # CRITICAL: Force fresh module reload (mandatory, not optional)
+    print(f"\n🔄 Force reloading translate module (ensuring latest code)...")
+    fresh_translate_module = force_reload_translate_module()
+    
+    if not fresh_translate_module:
         return None, (
             "❌ Translation module not available.\n\n"
             "Possible causes:\n"
@@ -295,12 +380,12 @@ def run_translate_pipeline(input_pdf_path: str, target_lang_code: str):
             "  - Check console output for import errors"
         )
     
-    if not hasattr(translate_module, "PDFProcessingPipeline"):
+    if not hasattr(fresh_translate_module, "PDFProcessingPipeline"):
         return None, (
             "❌ PDFProcessingPipeline class not found in translate.py\n\n"
             "Possible causes:\n"
             "  - translate.py has been modified and class renamed/moved\n"
-            "  - Module caching issue - try restarting the Gradio app\n"
+            "  - Module has syntax errors\n"
             "  - Check translate.py file for PDFProcessingPipeline class definition"
         )
     
@@ -310,10 +395,11 @@ def run_translate_pipeline(input_pdf_path: str, target_lang_code: str):
         print(f"📄 Input: {os.path.basename(input_pdf_path)}")
         print(f"📁 Full path: {os.path.abspath(input_pdf_path)}")
         print(f"🗣️  Target Language: {LANG_CODE_TO_DISPLAY.get(target_lang_code, target_lang_code)}")
+        print(f"⏰ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*60}\n")
         
-        # Initialize pipeline
-        pipeline = translate_module.PDFProcessingPipeline(working_dir="outputs")
+        # Initialize pipeline with freshly reloaded module
+        pipeline = fresh_translate_module.PDFProcessingPipeline(working_dir="outputs")
         
         # Run complete pipeline (path validation happens inside)
         result = pipeline.run_complete_pipeline(
@@ -328,7 +414,20 @@ def run_translate_pipeline(input_pdf_path: str, target_lang_code: str):
         if generated_pdfs:
             output_path = str(generated_pdfs[0])
             if os.path.exists(output_path):
-                print(f"✅ Translation successful: {os.path.basename(output_path)}")
+                # Verify output file
+                output_size = os.path.getsize(output_path)
+                with open(output_path, 'rb') as f:
+                    output_hash = hashlib.md5(f.read()).hexdigest()
+                
+                print(f"\n✅ Translation successful!")
+                print(f"📊 Output File Verification:")
+                print(f"   File: {os.path.basename(output_path)}")
+                print(f"   Size: {output_size:,} bytes")
+                print(f"   MD5: {output_hash}")
+                print(f"   {'='*60}")
+                print(f"   💡 Compare this MD5 hash with CLI output to verify match!")
+                print(f"   {'='*60}\n")
+                
                 return output_path, None
             else:
                 print(f"⚠️ PDF was generated but file not found at: {output_path}")
