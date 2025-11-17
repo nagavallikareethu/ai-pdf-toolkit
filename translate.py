@@ -2435,7 +2435,8 @@ class PDFProcessingPipeline:
             print(f"\n🖨️ Step 3/3: Rebuilding PDF for {lang_name}")
             output_pdf = self.working_dir / f"{base_name}_{lang_code_norm}.pdf"
             try:
-                pdf_gen = PDFGenerator(str(translated_json), str(output_pdf))
+                # Use OverlayPDFGenerator (same as CLI) instead of PDFGenerator
+                pdf_gen = OverlayPDFGenerator(str(translated_json), str(pdf_path), str(output_pdf))
                 pdf_gen.generate_pdf()
                 results["generated_pdfs"].append(output_pdf)
             except Exception as pdf_error:

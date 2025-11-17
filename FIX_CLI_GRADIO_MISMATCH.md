@@ -2,7 +2,16 @@
 
 **Date:** November 17, 2025  
 **Issue:** Translation outputs differed between CLI and Gradio  
-**Status:** 🎉 **FIXED**
+**Status:** 🎉 **FIXED** (Updated with PDF generation fix)
+
+---
+
+## 🔄 **UPDATE: Second Issue Found & Fixed**
+
+**Date:** November 17, 2025  
+**Issue:** After fixing JSON translation, PDF outputs were still different  
+**Cause:** Gradio used `PDFGenerator` while CLI used `OverlayPDFGenerator`  
+**Fix:** Changed Gradio to use `OverlayPDFGenerator` (same as CLI)
 
 ---
 
@@ -230,4 +239,61 @@ ensuring consistent translation results regardless of entry point.
 ---
 
 **Test it now and verify the outputs match!** 🎉
+
+---
+
+## 🔧 **Second Fix: PDF Generation Method (Line 2439)**
+
+### **Problem Found:**
+
+Even after JSON translation matched, the PDF outputs were different because:
+
+| Pipeline | PDF Generator | Behavior |
+|----------|--------------|----------|
+| **Gradio (Before)** | `PDFGenerator` | Creates NEW PDF from scratch |
+| **CLI** | `OverlayPDFGenerator` | Overlays on ORIGINAL PDF |
+
+### **Why This Matters:**
+
+- **`PDFGenerator`**: Creates a completely new PDF, losing original formatting, fonts, images
+- **`OverlayPDFGenerator`**: Preserves original PDF structure and only replaces text
+
+### **The Fix (Line 2439):**
+
+**BEFORE:**
+```python
+pdf_gen = PDFGenerator(str(translated_json), str(output_pdf))
+# Only passes JSON, creates new PDF
+```
+
+**AFTER:**
+```python
+# Use OverlayPDFGenerator (same as CLI) instead of PDFGenerator
+pdf_gen = OverlayPDFGenerator(str(translated_json), str(pdf_path), str(output_pdf))
+# Passes JSON + original PDF, preserves formatting
+```
+
+### **Result:**
+
+✅ Gradio now preserves original PDF formatting (same as CLI)  
+✅ Fonts, images, and layout remain intact  
+✅ Only text is translated and replaced  
+
+---
+
+## 📊 **Complete Fix Summary**
+
+Two fixes were needed to make Gradio match CLI:
+
+### **Fix #1: Translation Processing (Lines 2410-2413)**
+- **Issue**: Missing content type classification
+- **Result**: JSON translation now matches CLI (78 items vs 92)
+
+### **Fix #2: PDF Generation (Line 2439)**
+- **Issue**: Wrong PDF generator used
+- **Result**: PDF output now matches CLI (overlays instead of recreates)
+
+---
+
+**Both fixes applied! Test again and PDFs should now match!** 🎉
 
